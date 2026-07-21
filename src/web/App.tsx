@@ -1,10 +1,25 @@
 import { FormEvent, useEffect, useState } from "react";
 
-import type { PipelineProjectState as Project } from "../core/pipeline/project-state.js";
-import type { ErrorCode } from "../shared/contracts.js";
+import type { ErrorCode, ProjectState } from "../shared/contracts.js";
 import { chapterProgress, elapsedSeconds } from "./model.js";
 
-type Status = Project["agents"][number]["status"];
+type Status = "pending" | "running" | "completed" | "failed";
+type Project = Pick<ProjectState, "id" | "prompt" | "meta"> & {
+  agents: Array<{
+    id: string;
+    status: Status;
+    startedAt?: string;
+    completedAt?: string;
+    error?: string;
+  }>;
+  chapterRuns: Array<{ status: string }>;
+  manuscript: string | null;
+  bible: {
+    editorReport?: unknown;
+    continuityReport?: unknown;
+    publisherPackage?: unknown;
+  };
+};
 type ProjectSummary = { id: string; createdAt: string };
 
 const knownCodes = new Set<ErrorCode>([
