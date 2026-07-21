@@ -33,6 +33,12 @@ export type AgentContext = {
   characters?: CharacterOutput;
   worldbuilding?: WorldbuildingOutput;
   plot?: PlotOutput;
+  chapterSkeleton?: Array<{
+    id: string;
+    number: number;
+    title: string;
+    chapters: Array<Pick<Chapter, "id" | "partNumber" | "number" | "role" | "lengthPlan">>;
+  }>;
   outline?: Array<Pick<Chapter, "number" | "title" | "purpose" | "keyEvents" | "foreshadowing">>;
   targetChapter?: Pick<Chapter, "number" | "title" | "purpose" | "emotionalTurn" | "keyEvents" | "foreshadowing" | "lengthPlan">;
   priorChapterSummaries?: Array<{ chapterNumber: number; summary: string }>;
@@ -149,7 +155,21 @@ export const buildWorldbuildingContext = (input: BuildContextInput): AgentContex
 });
 
 export const buildPlotContext = planningContext;
-export const buildChapterOutlineContext = planningContext;
+export const buildChapterOutlineContext = (input: BuildContextInput): AgentContext => ({
+  ...planningContext(input),
+  chapterSkeleton: input.bible.parts.map(({ id, number, title, chapters }) => ({
+    id,
+    number,
+    title,
+    chapters: chapters.map(({ id: chapterId, partNumber, number: chapterNumber, role, lengthPlan }) => ({
+      id: chapterId,
+      partNumber,
+      number: chapterNumber,
+      role,
+      lengthPlan,
+    })),
+  })),
+});
 
 const outline = (bible: StoryBible): AgentContext["outline"] => bible.chapters
   .slice()

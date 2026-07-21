@@ -1,7 +1,8 @@
 import { agentDefinitions, mergeAgentOutput, type AgentId } from "../registry/agent-registry.js";
+import { createGenerateFromEnv, shouldCompactRetry } from "../llm/openai-client.js";
 import { rebuildManuscript } from "./artifacts.js";
 import { parseAgentOutput } from "./json-output.js";
-import { generateMock, type Generate } from "./mock-llm.js";
+import type { Generate } from "./mock-llm.js";
 import { PipelineProjectStateSchema, type PipelineProjectState } from "./project-state.js";
 
 export class RunConflictError extends Error {}
@@ -90,6 +91,7 @@ async function invoke(
       return parseAgentOutput(raw, definition.schema);
     } catch (cause) {
       lastError = cause;
+      if (!shouldCompactRetry(cause)) throw cause;
     }
   }
   throw lastError;
@@ -133,7 +135,7 @@ async function runDrafting(runtime: PipelineRuntime, initial: PipelineProjectSta
 export async function executePipeline(
   initial: PipelineProjectState,
   runtime: PipelineRuntime,
-  generate: Generate = generateMock,
+  generate: Generate = createGenerateFromEnv(),
 ): Promise<PipelineProjectState> {
   if (initial.agents.every(({ status }) => status === "completed")) {
     await runtime.writeArtifacts(initial);
