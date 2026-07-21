@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { canonicalBible } from "../../../test/fixtures/canonical-story.js";
+import { agentDefinitions, type AgentId } from "../registry/agent-registry.js";
+import { buildPrompt, promptAgentIds } from "./prompts.js";
+
+const input = {
+  prompt: "雨の夜の郵便局を舞台にした物語",
+  language: "ja" as const,
+  bible: canonicalBible,
+  completedOutputs: {},
+};
+
+test("all nine prompts share the JSON and language contract", () => {
+  assert.deepEqual(promptAgentIds, agentDefinitions.map(({ id }) => id));
+
+  for (const definition of agentDefinitions) {
+    const context = definition.buildContext({
+      ...input,
+      chapterNumber: definition.id === "drafting" ? 1 : undefined,
+    });
+    const prompt = buildPrompt({
+      agentId: definition.id,
+      context,
+      chapterCount: 2,
+      chapterNumber: definition.id === "drafting" ? 1 : undefined,
+      compact: false,
+    });
+
+    assert.match(prompt.system, /valid JSON only/);
+    assert.match(prompt.system, /JSON keys.*English/);
+    assert.match(prompt.system, /values.*Japanese/);
+    assert.match(prompt.system, /markdown/i);
+    assert.match(prompt.user, new RegExp(`ROLE=${definition.id}`));
+    assert.match(prompt.user, /CONTEXT=/);
+  }
+});
+
+test("chapter outline sends the deterministic skeleton and compact retry is smaller", () => {
+  const definition = agentDefinitions.find(({ id }) => id === "chapter-outline")!;
+  const context = definition.buildContext(input);
+  const regular = buildPrompt({
+    agentId: "chapter-outline",
+    context,
+    chapterCount: 2,
+    compact: false,
+  });
+  const compact = buildPrompt({
+    agentId: "chapter-outline",
+    context,
+    chapterCount: 2,
+    compact: true,
+  });
+
+  for (const chapter of canonicalBible.chapters) {
+    assert.match(regular.user, new RegExp(`"number":${chapter.number}`));
+    assert.match(regular.user, new RegExp(`"target":${chapter.lengthPlan.target}`));
+  }
+  assert.match(regular.user, /must not change id, partNumber, number, role, or lengthPlan/);
+  assert.match(compact.user, /COMPACT RETRY/);
+  assert.ok(compact.user.length < regular.user.length);
+});
+
+test("each role asks only for its declared English JSON keys", () => {
+  const expected: Record<AgentId, string[]> = {
+    concept: ["logline", "coreTheme", "centralConflict", "emotionalPromise", "uniqueHook"],
+    character: ["protagonist", "antagonist", "supporting"],
+    worldbuilding: ["setting", "rules", "socialContext", "atmosphere", "locations", "symbols"],
+    plot: ["beginning", "middle", "climax", "ending", "twists", "foreshadowingPlan"],
+    "chapter-outline": ["parts", "styleGuide", "foreshadowingTracker"],
+    drafting: ["chapterNumber", "draft", "chapterSummary", "continuityNotes"],
+    editor: ["strengths", "weakPoints", "pacing", "dialogue", "emotionalClarity", "revisionSuggestions"],
+    continuity: ["issues", "unresolvedForeshadowing", "missingPayoffs", "overallAssessment"],
+    publisher: ["titleIdeas", "shortSynopsis", "longSynopsis", "logline", "tagline", "socialPosts", "submissionDescription"],
+  };
+
+  for (const id of promptAgentIds) {
+    const definition = agentDefinitions.find(({ id: candidate }) => candidate === id)!;
+    const prompt = buildPrompt({
+      agentId: id,
+      context: definition.buildContext({ ...input, chapterNumber: id === "drafting" ? 1 : undefined }),
+      chapterCount: 2,
+      chapterNumber: id === "drafting" ? 1 : undefined,
+      compact: false,
+    });
+    for (const key of expected[id]) assert.match(prompt.user, new RegExp(`\\b${key}\\b`));
+  }
+});
