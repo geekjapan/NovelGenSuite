@@ -58,8 +58,51 @@ test("chapter outline sends the deterministic skeleton and compact retry is smal
     assert.match(regular.user, new RegExp(`"target":${chapter.lengthPlan.target}`));
   }
   assert.match(regular.user, /must not change id, partNumber, number, role, or lengthPlan/);
+  assert.match(regular.user, /keyEvents と foreshadowing は配列/);
+  assert.match(regular.user, /styleGuide は必須オブジェクト/);
+  assert.match(regular.user, /foreshadowingTracker は配列/);
+  assert.match(regular.user, /status は planned, unresolved, paid-off/);
   assert.match(compact.user, /COMPACT RETRY/);
   assert.ok(compact.user.length < regular.user.length);
+});
+
+test("character prompt requires supporting characters as an array", () => {
+  const definition = agentDefinitions.find(({ id }) => id === "character")!;
+  const prompt = buildPrompt({
+    agentId: "character",
+    context: definition.buildContext(input),
+    chapterCount: 2,
+    compact: false,
+  });
+
+  assert.match(prompt.user, /supporting は人物の配列/);
+});
+
+test("drafting prompt requires continuity notes as an array", () => {
+  const definition = agentDefinitions.find(({ id }) => id === "drafting")!;
+  const prompt = buildPrompt({
+    agentId: "drafting",
+    context: definition.buildContext({ ...input, chapterNumber: 1 }),
+    chapterCount: 2,
+    chapterNumber: 1,
+    compact: false,
+  });
+
+  assert.match(prompt.user, /continuityNotes は文字列の配列/);
+});
+
+test("continuity prompt states issue enums and array fields", () => {
+  const definition = agentDefinitions.find(({ id }) => id === "continuity")!;
+  const prompt = buildPrompt({
+    agentId: "continuity",
+    context: definition.buildContext({ ...input, manuscript: "本文" }),
+    chapterCount: 2,
+    compact: false,
+  });
+
+  assert.match(prompt.user, /category は character, world, plot, time, foreshadowing/);
+  assert.match(prompt.user, /severity は low, medium, high/);
+  assert.match(prompt.user, /unresolvedForeshadowing と missingPayoffs は文字列の配列/);
 });
 
 test("each role asks only for its declared English JSON keys", () => {
