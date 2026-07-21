@@ -77,6 +77,9 @@ export function createOpenAIGenerate(options: OpenAIOptions): Generate {
     } catch {
       throw new LlmError("OpenAI response was not valid JSON", true);
     }
+    if (payload === null || typeof payload !== "object") {
+      throw new LlmError("OpenAI response was not a JSON object", true);
+    }
     const content = (payload as { choices?: Array<{ message?: { content?: unknown } }> })
       .choices?.[0]?.message?.content;
     if (typeof content !== "string" || content.length === 0) {

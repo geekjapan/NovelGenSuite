@@ -114,7 +114,14 @@ export async function listProjects(
   const states = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory() && SAFE_ID.test(entry.name))
-      .map((entry) => readProjectState(root, entry.name)),
+      .map(async (entry) => {
+        try {
+          return await readProjectState(root, entry.name);
+        } catch (error) {
+          console.error(`Failed to read project state for ${entry.name}:`, error);
+          return undefined;
+        }
+      }),
   );
   return states
     .filter((state): state is PipelineProjectState => state !== undefined)

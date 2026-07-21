@@ -2,9 +2,14 @@ import type { z } from "zod";
 
 const fenced = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/i;
 
+// 開始候補の走査は各試行が O(N) のため、無制限だと不正入力で O(N^2) に達しうる
+const MAX_START_ATTEMPTS = 10;
+
 function balancedJson(value: string): string | undefined {
+  let attempts = 0;
   for (let start = 0; start < value.length; start += 1) {
     if (value[start] !== "{" && value[start] !== "[") continue;
+    if (++attempts > MAX_START_ATTEMPTS) break;
     const stack: string[] = [];
     let quoted = false;
     let escaped = false;

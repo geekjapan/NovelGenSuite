@@ -30,6 +30,7 @@ async function api<T>(schema: ZodType<T>, path: string, init?: RequestInit): Pro
   if (response.ok) {
     const result = schema.safeParse(body);
     if (result.success) return result.data;
+    console.error("API contract validation failed:", result.error);
   } else {
     const result = ErrorEnvelopeSchema.safeParse(body);
     if (result.success) throw new ApiError(result.data.error.code, result.data.error.message);
