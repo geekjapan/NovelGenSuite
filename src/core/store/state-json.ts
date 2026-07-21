@@ -13,7 +13,6 @@ import { join } from "node:path";
 import {
   ProjectStateSchema,
   type Configuration,
-  type ProjectState,
   type SupportedLanguage,
 } from "../../shared/contracts.js";
 import {
@@ -52,11 +51,11 @@ export async function createProject(
     }
 
     const now = new Date().toISOString();
-    const state = initializePipelineState({
+    const state = initializePipelineState(ProjectStateSchema.parse({
       id,
       ...input,
       meta: { schemaVersion: 1, createdAt: now, updatedAt: now },
-    } as ProjectState);
+    }));
     try {
       await writeProjectState(root, state);
       return state;

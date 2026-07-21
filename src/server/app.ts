@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { z } from "zod";
 
 import {
   executePipeline,
@@ -13,24 +12,14 @@ import {
   readProjectState,
 } from "../core/store/state-json.js";
 import {
+  CreateProjectRequestSchema,
   findLanguagePolicy,
+  type ErrorCode,
+  type ErrorEnvelope,
   type SupportedLanguage,
 } from "../shared/contracts.js";
 
-type ApiErrorCode = "unsupported-language" | "unsupported-setting" | "validation-error" |
-  "project-not-found" | "run-conflict";
-
-const CreateRequestSchema = z.object({
-  prompt: z.string().trim().min(1),
-  language: z.string().default("ja"),
-  configuration: z.object({
-    chapterCount: z.number().int().min(1).max(64).default(2),
-    chapterLength: z.number().int().positive().default(2000),
-    requireApproval: z.boolean().default(false),
-  }).default({ chapterCount: 2, chapterLength: 2000, requireApproval: false }),
-});
-
-function error(code: ApiErrorCode, message: string) {
+function error(code: ErrorCode, message: string): ErrorEnvelope {
   return { error: { code, message } };
 }
 
@@ -52,7 +41,7 @@ export function createApp({ projectsRoot, generate }: { projectsRoot: string; ge
       return context.json(error("validation-error", "JSON が不正です。"), 400);
     }
 
-    const result = CreateRequestSchema.safeParse(json);
+    const result = CreateProjectRequestSchema.safeParse(json);
     if (!result.success) {
       return context.json(error("validation-error", "入力内容を確認してください。"), 400);
     }

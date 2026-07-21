@@ -4,12 +4,6 @@ import { StoryBibleSchema, emptyStoryBible } from "../../shared/story-bible.js";
 import { ProjectStateSchema } from "../../shared/contracts.js";
 import { agentDefinitions, type AgentId } from "../registry/agent-registry.js";
 
-const PipelineConfigurationSchema = z.object({
-  chapterCount: z.number().int().min(1).max(64),
-  chapterLength: z.number().int().positive(),
-  requireApproval: z.literal(false),
-});
-
 const AgentRunSchema = z.object({
   id: z.enum(agentDefinitions.map(({ id }) => id) as [AgentId, ...AgentId[]]),
   status: z.enum(["pending", "running", "completed", "failed"]),
@@ -26,7 +20,6 @@ const ChapterRunSchema = z.object({
 });
 
 export const PipelineProjectStateSchema = ProjectStateSchema.extend({
-  configuration: PipelineConfigurationSchema,
   bible: StoryBibleSchema,
   agents: z.array(AgentRunSchema),
   chapterRuns: z.array(ChapterRunSchema),

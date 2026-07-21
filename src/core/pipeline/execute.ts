@@ -8,18 +8,12 @@ import { PipelineProjectStateSchema, type PipelineProjectState } from "./project
 export class RunConflictError extends Error {}
 
 class PipelineStepError extends Error {
-  constructor(readonly state: PipelineProjectState, readonly cause: unknown) {
+  constructor(readonly state: PipelineProjectState) {
     super("Pipeline step failed");
   }
 }
 
-const errorSummary = (cause: unknown) => {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  return message
-    .replace(/(?:Bearer\s+|sk-)[A-Za-z0-9._-]+/gi, "[redacted]")
-    .replace(/[a-f0-9]{32,}/gi, "[redacted]")
-    .slice(0, 280);
-};
+const EXECUTION_ERROR = "Agent execution failed";
 
 const changed = (state: PipelineProjectState): PipelineProjectState => ({
   ...state,
@@ -107,8 +101,8 @@ async function runDrafting(root: string, initial: PipelineProjectState, generate
     let output: unknown;
     try {
       output = await invoke(state, "drafting", generate, chapter.number);
-    } catch (cause) {
-      throw new PipelineStepError(state, cause);
+    } catch {
+      throw new PipelineStepError(state);
     }
     state = {
       ...state,
@@ -173,7 +167,7 @@ export async function executePipeline(
       state = await save(root, state);
     } catch (cause) {
       if (cause instanceof PipelineStepError) state = cause.state;
-      const summary = errorSummary(cause instanceof PipelineStepError ? cause.cause : cause);
+      const summary = EXECUTION_ERROR;
       state = setAgent(state, definition.id, { status: "failed", error: summary });
       if (definition.id === "drafting") {
         const generating = state.chapterRuns.find(({ status }) => status === "generating");

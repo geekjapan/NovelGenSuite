@@ -156,8 +156,22 @@ test("zod failure retries compact once, records the role failure, and stops", as
 
   assert.deepEqual(attempts, [false, true]);
   assert.equal(failed.agents[0].status, "failed");
-  assert.ok(failed.agents[0].error.length > 0);
+  assert.equal(failed.agents[0].error, "Agent execution failed");
   assert.ok(failed.agents.slice(1).every(({ status }: any) => status === "pending"));
+});
+
+test("persisted agent errors never contain provider secrets or internal paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const generate: Generate = async () => {
+    throw new Error("/Users/private/client.ts token_xyz_UNRECOGNIZED_SECRET_FORMAT");
+  };
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app);
+  const failed = await (await app.request(`/projects/${created.id}/run`, { method: "POST" })).json();
+
+  assert.equal(failed.agents[0].error, "Agent execution failed");
+  assert.equal(JSON.stringify(failed).includes("UNRECOGNIZED_SECRET_FORMAT"), false);
+  assert.equal(JSON.stringify(failed).includes("/Users/private"), false);
 });
 
 test("HTTP API returns stable input and not-found error codes", async () => {

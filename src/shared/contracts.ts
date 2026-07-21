@@ -1,13 +1,13 @@
 import { z } from "zod";
 
 export const DEFAULT_CONFIGURATION = {
-  chapterCount: 1,
+  chapterCount: 2,
   chapterLength: 2000,
   requireApproval: false,
 } as const;
 
 export const ConfigurationSchema = z.object({
-  chapterCount: z.number().int().min(1).max(2).default(DEFAULT_CONFIGURATION.chapterCount),
+  chapterCount: z.number().int().min(1).max(64).default(DEFAULT_CONFIGURATION.chapterCount),
   chapterLength: z.number().int().positive().default(DEFAULT_CONFIGURATION.chapterLength),
   requireApproval: z.boolean().default(DEFAULT_CONFIGURATION.requireApproval),
 });
@@ -58,6 +58,7 @@ export const ErrorCodeSchema = z.enum([
   "unsupported-setting",
   "validation-error",
   "project-not-found",
+  "run-conflict",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
