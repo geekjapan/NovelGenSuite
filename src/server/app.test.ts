@@ -137,7 +137,7 @@ test("a new server marks an orphaned running role failed before serving state", 
   const restarted = createApp({ projectsRoot: root });
   const recovered = await (await restarted.request(`/projects/${created.id}/state`)).json();
   assert.equal(recovered.agents[0].status, "failed");
-  assert.match(recovered.agents[0].error, /Server restarted/);
+  assert.match(recovered.agents[0].error, /再起動/);
 
   const resumed = await (await restarted.request(`/projects/${created.id}/run`, { method: "POST" })).json();
   assert.ok(resumed.agents.every(({ status }: any) => status === "completed"));

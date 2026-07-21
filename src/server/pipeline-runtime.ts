@@ -32,7 +32,7 @@ export async function reconcileOrphanedRuns(root: string): Promise<void> {
     try {
       const state = await readProjectState(root, id);
       if (!state?.agents.some(({ status }) => status === "running")) continue;
-      const summary = "Server restarted while this role was running";
+      const summary = "サーバー再起動時にこの役は実行中のまま中断されました。再開で続行できます。";
       await writeProjectState(root, PipelineProjectStateSchema.parse({
         ...state,
         meta: { ...state.meta, updatedAt: new Date().toISOString() },
