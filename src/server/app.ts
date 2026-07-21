@@ -67,8 +67,7 @@ export function createApp({ projectsRoot }: { projectsRoot: string }) {
   app.notFound((context) =>
     context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404),
   );
-  app.onError((cause, context) => {
-    console.error(cause);
+  app.onError((_cause, context) => {
     return context.json(error("validation-error", "状態を処理できませんでした。"), 500);
   });
 
