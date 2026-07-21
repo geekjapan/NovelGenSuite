@@ -59,6 +59,7 @@ export function createOpenAIGenerate(options: OpenAIOptions): Generate {
         },
         body: JSON.stringify({
           model: options.model,
+          stream: false,
           messages: [
             { role: "system", content: prompt.system },
             { role: "user", content: prompt.user },

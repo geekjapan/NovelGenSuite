@@ -74,6 +74,7 @@ test("fake OpenAI server completes the pipeline after compact fenced-JSON recove
     assert.match(requests[1]!.body.messages[1].content, /COMPACT RETRY/);
     assert.equal(requests[0]!.authorization, "Bearer test-secret");
     assert.equal(requests[0]!.body.model, "test-model");
+    assert.equal(requests[0]!.body.stream, false);
     assert.equal(requests[0]!.body.messages[0].role, "system");
     assert.equal(requests[0]!.body.messages[1].role, "user");
   } finally {
@@ -134,7 +135,7 @@ test("missing model is persisted as the first agent failure on the default pipel
   const previousModel = process.env.NOVELGEN_MODEL;
   const saved: ReturnType<typeof initial>[] = [];
   process.env.OPENAI_API_KEY = "test-secret";
-  delete process.env.NOVELGEN_MODEL;
+  process.env.NOVELGEN_MODEL = "";
 
   try {
     const failed = await executePipeline(initial(), {
