@@ -31,11 +31,9 @@ function projectedOutline(count: number) {
         const template = templates[index % templates.length]!;
         return {
           ...template,
-          id: `chapter-${number}`,
           number,
           role: role(number, count),
           title: `第${number}章 ${template.title}`,
-          purpose: `第${number}章: ${template.purpose}`,
         };
       }),
     }],

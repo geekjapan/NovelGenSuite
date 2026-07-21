@@ -1,11 +1,15 @@
 import { agentDefinitions, mergeAgentOutput, type AgentId } from "../registry/agent-registry.js";
-import { listProjects, readProjectState, writeProjectState } from "../store/state-json.js";
-import { rebuildManuscript, writeArtifacts } from "./artifacts.js";
+import { rebuildManuscript } from "./artifacts.js";
 import { parseAgentOutput } from "./json-output.js";
 import { generateMock, type Generate } from "./mock-llm.js";
 import { PipelineProjectStateSchema, type PipelineProjectState } from "./project-state.js";
 
 export class RunConflictError extends Error {}
+
+export type PipelineRuntime = {
+  save: (state: PipelineProjectState) => Promise<void>;
+  writeArtifacts: (state: PipelineProjectState) => Promise<void>;
+};
 
 class PipelineStepError extends Error {
   constructor(readonly state: PipelineProjectState) {
@@ -20,9 +24,9 @@ const changed = (state: PipelineProjectState): PipelineProjectState => ({
   meta: { ...state.meta, updatedAt: new Date().toISOString() },
 });
 
-async function save(root: string, state: PipelineProjectState) {
+async function save(runtime: PipelineRuntime, state: PipelineProjectState) {
   const next = PipelineProjectStateSchema.parse(changed(state));
-  await writeProjectState(root, next);
+  await runtime.save(next);
   return next;
 }
 
@@ -91,13 +95,13 @@ async function invoke(
   throw lastError;
 }
 
-async function runDrafting(root: string, initial: PipelineProjectState, generate: Generate) {
+async function runDrafting(runtime: PipelineRuntime, initial: PipelineProjectState, generate: Generate) {
   let state = initial;
   const chapters = state.bible.chapters.slice().sort((left, right) => left.number - right.number);
   for (const chapter of chapters) {
     if (chapter.draft) continue;
     state = setChapter(state, chapter.number, { status: "generating", error: undefined });
-    state = await save(root, state);
+    state = await save(runtime, state);
     let output: unknown;
     try {
       output = await invoke(state, "drafting", generate, chapter.number);
@@ -118,21 +122,21 @@ async function runDrafting(root: string, initial: PipelineProjectState, generate
       lengthStatus: lengthStatus(state, chapter.number, draft),
       error: undefined,
     });
-    state = await save(root, state);
+    state = await save(runtime, state);
   }
   if (state.bible.chapters.every(({ draft }) => Boolean(draft))) {
-    state = await save(root, { ...state, manuscript: rebuildManuscript(state) });
+    state = await save(runtime, { ...state, manuscript: rebuildManuscript(state) });
   }
   return state;
 }
 
 export async function executePipeline(
-  root: string,
   initial: PipelineProjectState,
+  runtime: PipelineRuntime,
   generate: Generate = generateMock,
 ): Promise<PipelineProjectState> {
   if (initial.agents.every(({ status }) => status === "completed")) {
-    await writeArtifacts(root, initial);
+    await runtime.writeArtifacts(initial);
     return initial;
   }
   if (initial.agents.some(({ status }) => status === "running")) throw new RunConflictError("run-conflict");
@@ -147,10 +151,10 @@ export async function executePipeline(
       completedAt: undefined,
       error: undefined,
     });
-    state = await save(root, state);
+    state = await save(runtime, state);
     try {
       if (definition.id === "drafting") {
-        state = await runDrafting(root, state, generate);
+        state = await runDrafting(runtime, state, generate);
       } else {
         const output = await invoke(state, definition.id, generate);
         state = {
@@ -164,7 +168,7 @@ export async function executePipeline(
         completedAt: new Date().toISOString(),
         error: undefined,
       });
-      state = await save(root, state);
+      state = await save(runtime, state);
     } catch (cause) {
       if (cause instanceof PipelineStepError) state = cause.state;
       const summary = EXECUTION_ERROR;
@@ -173,28 +177,9 @@ export async function executePipeline(
         const generating = state.chapterRuns.find(({ status }) => status === "generating");
         if (generating) state = setChapter(state, generating.chapterNumber, { status: "failed", error: summary });
       }
-      return save(root, state);
+      return save(runtime, state);
     }
   }
-  await writeArtifacts(root, state);
+  await runtime.writeArtifacts(state);
   return state;
-}
-
-export async function reconcileOrphanedRuns(root: string): Promise<void> {
-  for (const { id } of await listProjects(root)) {
-    const state = await readProjectState(root, id);
-    if (!state?.agents.some(({ status }) => status === "running")) continue;
-    const summary = "Server restarted while this role was running";
-    let recovered = {
-      ...state,
-      agents: state.agents.map((agent) => agent.status === "running"
-        ? { ...agent, status: "failed" as const, error: summary }
-        : agent),
-      chapterRuns: state.chapterRuns.map((chapter) => chapter.status === "generating"
-        ? { ...chapter, status: "failed" as const, error: summary }
-        : chapter),
-    };
-    recovered = changed(recovered);
-    await writeProjectState(root, PipelineProjectStateSchema.parse(recovered));
-  }
 }

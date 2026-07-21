@@ -2,7 +2,6 @@ import { Hono } from "hono";
 
 import {
   executePipeline,
-  reconcileOrphanedRuns,
   RunConflictError,
 } from "../core/pipeline/execute.js";
 import type { Generate } from "../core/pipeline/mock-llm.js";
@@ -18,6 +17,7 @@ import {
   type ErrorEnvelope,
   type SupportedLanguage,
 } from "../shared/contracts.js";
+import { createPipelineRuntime, reconcileOrphanedRuns } from "./pipeline-runtime.js";
 
 function error(code: ErrorCode, message: string): ErrorEnvelope {
   return { error: { code, message } };
@@ -26,6 +26,7 @@ function error(code: ErrorCode, message: string): ErrorEnvelope {
 export function createApp({ projectsRoot, generate }: { projectsRoot: string; generate?: Generate }) {
   const app = new Hono();
   const reconciliation = reconcileOrphanedRuns(projectsRoot);
+  const pipelineRuntime = createPipelineRuntime(projectsRoot);
   const activeRuns = new Set<string>();
 
   app.use("*", async (_context, next) => {
@@ -77,7 +78,7 @@ export function createApp({ projectsRoot, generate }: { projectsRoot: string; ge
     if (activeRuns.has(id)) return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
     activeRuns.add(id);
     try {
-      return context.json(await executePipeline(projectsRoot, state, generate));
+      return context.json(await executePipeline(state, pipelineRuntime, generate));
     } catch (cause) {
       if (cause instanceof RunConflictError) {
         return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
