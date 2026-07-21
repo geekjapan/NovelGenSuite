@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   ProjectListResponseSchema,
   WebProjectStateSchema,
-} from "./contracts.js";
+} from "../src/shared/contracts.js";
 
 const createdAt = "2026-07-21T00:00:00.000Z";
 
