@@ -1,24 +1,48 @@
 import { Hono } from "hono";
+import { z } from "zod";
 
+import {
+  executePipeline,
+  reconcileOrphanedRuns,
+  RunConflictError,
+} from "../core/pipeline/execute.js";
+import type { Generate } from "../core/pipeline/mock-llm.js";
 import {
   createProject,
   listProjects,
   readProjectState,
 } from "../core/store/state-json.js";
 import {
-  CreateProjectRequestSchema,
   findLanguagePolicy,
-  type ErrorCode,
-  type ErrorEnvelope,
   type SupportedLanguage,
 } from "../shared/contracts.js";
 
-function error(code: ErrorCode, message: string): ErrorEnvelope {
+type ApiErrorCode = "unsupported-language" | "unsupported-setting" | "validation-error" |
+  "project-not-found" | "run-conflict";
+
+const CreateRequestSchema = z.object({
+  prompt: z.string().trim().min(1),
+  language: z.string().default("ja"),
+  configuration: z.object({
+    chapterCount: z.number().int().min(1).max(64).default(2),
+    chapterLength: z.number().int().positive().default(2000),
+    requireApproval: z.boolean().default(false),
+  }).default({ chapterCount: 2, chapterLength: 2000, requireApproval: false }),
+});
+
+function error(code: ApiErrorCode, message: string) {
   return { error: { code, message } };
 }
 
-export function createApp({ projectsRoot }: { projectsRoot: string }) {
+export function createApp({ projectsRoot, generate }: { projectsRoot: string; generate?: Generate }) {
   const app = new Hono();
+  const reconciliation = reconcileOrphanedRuns(projectsRoot);
+  const activeRuns = new Set<string>();
+
+  app.use("*", async (_context, next) => {
+    await reconciliation;
+    await next();
+  });
 
   app.post("/projects", async (context) => {
     let json: unknown;
@@ -28,7 +52,7 @@ export function createApp({ projectsRoot }: { projectsRoot: string }) {
       return context.json(error("validation-error", "JSON が不正です。"), 400);
     }
 
-    const result = CreateProjectRequestSchema.safeParse(json);
+    const result = CreateRequestSchema.safeParse(json);
     if (!result.success) {
       return context.json(error("validation-error", "入力内容を確認してください。"), 400);
     }
@@ -58,10 +82,21 @@ export function createApp({ projectsRoot }: { projectsRoot: string }) {
   });
 
   app.post("/projects/:id/run", async (context) => {
-    const state = await readProjectState(projectsRoot, context.req.param("id"));
-    return state
-      ? context.json(state)
-      : context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+    const id = context.req.param("id");
+    const state = await readProjectState(projectsRoot, id);
+    if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+    if (activeRuns.has(id)) return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
+    activeRuns.add(id);
+    try {
+      return context.json(await executePipeline(projectsRoot, state, generate));
+    } catch (cause) {
+      if (cause instanceof RunConflictError) {
+        return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
+      }
+      throw cause;
+    } finally {
+      activeRuns.delete(id);
+    }
   });
 
   app.notFound((context) =>

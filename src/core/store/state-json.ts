@@ -16,6 +16,11 @@ import {
   type ProjectState,
   type SupportedLanguage,
 } from "../../shared/contracts.js";
+import {
+  initializePipelineState,
+  PipelineProjectStateSchema,
+  type PipelineProjectState,
+} from "../pipeline/project-state.js";
 
 const SAFE_ID = /^[A-Za-z0-9_-]+$/;
 
@@ -33,7 +38,7 @@ export async function createProject(
     language: SupportedLanguage;
     configuration: Configuration;
   },
-): Promise<ProjectState> {
+): Promise<PipelineProjectState> {
   await mkdir(root, { recursive: true });
 
   for (;;) {
@@ -47,11 +52,11 @@ export async function createProject(
     }
 
     const now = new Date().toISOString();
-    const state = ProjectStateSchema.parse({
+    const state = initializePipelineState({
       id,
       ...input,
       meta: { schemaVersion: 1, createdAt: now, updatedAt: now },
-    });
+    } as ProjectState);
     try {
       await writeProjectState(root, state);
       return state;
@@ -64,9 +69,9 @@ export async function createProject(
 
 export async function writeProjectState(
   root: string,
-  state: ProjectState,
+  state: PipelineProjectState,
 ): Promise<void> {
-  const parsed = ProjectStateSchema.parse(state);
+  const parsed = PipelineProjectStateSchema.parse(state);
   const directory = join(root, parsed.id);
   const temporary = join(directory, `.state-${randomUUID()}.tmp`);
   try {
@@ -84,10 +89,10 @@ export async function writeProjectState(
 export async function readProjectState(
   root: string,
   id: string,
-): Promise<ProjectState | undefined> {
+): Promise<PipelineProjectState | undefined> {
   if (!SAFE_ID.test(id)) return undefined;
   try {
-    return ProjectStateSchema.parse(
+    return PipelineProjectStateSchema.parse(
       JSON.parse(await readFile(join(root, id, "state.json"), "utf8")),
     );
   } catch (error) {
@@ -113,7 +118,7 @@ export async function listProjects(
       .map((entry) => readProjectState(root, entry.name)),
   );
   return states
-    .filter((state): state is ProjectState => state !== undefined)
+    .filter((state): state is PipelineProjectState => state !== undefined)
     .map(({ id, meta }) => ({ id, createdAt: meta.createdAt }))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
