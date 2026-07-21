@@ -8,9 +8,10 @@
     "dev": "vite --config src/web/vite.config.ts",
     "build": "vite build --config src/web/vite.config.ts",
     "test": "tsx --test 'src/**/*.test.ts' 'test/**/*.test.ts'",
+    "e2e": "playwright test",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
-    "typecheck:node": "tsc -p tsconfig.node.json",
-    "typecheck:web": "tsc -p tsconfig.web.json --jsx react-jsx"
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit --jsx react-jsx"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",
@@ -18,11 +19,12 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/vite": "^4.1.0",
+    "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.4.0",
-    "@types/node": "^24.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.1.0",
