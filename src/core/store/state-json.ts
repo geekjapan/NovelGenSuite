@@ -60,7 +60,7 @@ export async function createProject(
       await writeProjectState(root, state);
       return state;
     } catch (error) {
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
   }
@@ -80,7 +80,7 @@ export async function writeProjectState(
     });
     await rename(temporary, join(directory, "state.json"));
   } catch (error) {
-    await rm(temporary, { force: true });
+    await rm(temporary, { force: true }).catch(() => {});
     throw error;
   }
 }

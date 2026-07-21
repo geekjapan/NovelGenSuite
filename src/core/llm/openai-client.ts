@@ -3,6 +3,9 @@ import { buildPrompt } from "../prompts/prompts.js";
 
 export const DEFAULT_OPENAI_BASE_URL = "http://127.0.0.1:20128/v1";
 
+// 呼び出し側 signal が無い場合の保険。ローカル LLM の長い章生成を誤殺しない値に留める
+const DEFAULT_TIMEOUT_MS = 600_000;
+
 export class LlmError extends Error {
   constructor(message: string, readonly retryable: boolean) {
     super(message);
@@ -61,9 +64,12 @@ export function createOpenAIGenerate(options: OpenAIOptions): Generate {
             { role: "user", content: prompt.user },
           ],
         }),
-        signal: options.signal,
+        signal: options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
       });
     } catch (cause) {
+      if (cause instanceof Error && cause.name === "TimeoutError") {
+        throw new LlmError("OpenAI request timed out", true);
+      }
       if (cause instanceof Error && cause.name === "AbortError") {
         throw new LlmError("OpenAI request aborted", false);
       }

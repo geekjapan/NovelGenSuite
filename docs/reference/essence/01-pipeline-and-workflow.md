@@ -31,7 +31,7 @@
 
 ユーザーが移動する画面段階は launcher → planning → drafting → final の4つ。エージェント状態(pending/running/completed/failed)とは別軸で管理する。
 
-```
+```text
 [*] → launcher
 launcher → planning        : 生成開始
 planning → 承認待ち         : chapter-outline 完了 かつ 承認が必要な設定
