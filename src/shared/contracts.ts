@@ -14,7 +14,15 @@ export const ConfigurationSchema = z.object({
 export type Configuration = z.infer<typeof ConfigurationSchema>;
 
 export const languagePolicies = {
-  ja: { locale: "ja-JP" },
+  ja: {
+    locale: "ja-JP",
+    lengthUnit: "characters",
+    promptHeadCharacters: 600,
+    promptTailCharacters: 300,
+    previousChapterTailCharacters: 300,
+    omissionMarker: "…省略…",
+    excerptMarker: "…抜粋…",
+  },
 } as const;
 
 export const SupportedLanguageSchema = z.enum(["ja"]);
