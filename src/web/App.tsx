@@ -1,31 +1,11 @@
 import { FormEvent, useEffect, useState } from "react";
 
+import type { PipelineProjectState as Project } from "../core/pipeline/project-state.js";
+import type { ErrorCode } from "../shared/contracts.js";
 import { chapterProgress, elapsedSeconds } from "./model.js";
 
-type Status = "pending" | "running" | "completed" | "failed";
-type AgentRun = {
-  id: string;
-  status: Status;
-  startedAt?: string;
-  completedAt?: string;
-  error?: string;
-};
-type ChapterRun = { status: "pending" | "generating" | "completed" | "failed" | "edited"; error?: string };
-type Project = {
-  id: string;
-  prompt: string;
-  meta: { createdAt: string; updatedAt: string };
-  agents: AgentRun[];
-  chapterRuns: ChapterRun[];
-  manuscript: string | null;
-  bible: {
-    editorReport?: unknown;
-    continuityReport?: unknown;
-    publisherPackage?: unknown;
-  };
-};
+type Status = Project["agents"][number]["status"];
 type ProjectSummary = { id: string; createdAt: string };
-type ErrorCode = "unsupported-language" | "unsupported-setting" | "validation-error" | "project-not-found" | "run-conflict";
 
 const knownCodes = new Set<ErrorCode>([
   "unsupported-language",
