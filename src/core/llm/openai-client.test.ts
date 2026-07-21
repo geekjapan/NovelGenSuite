@@ -129,6 +129,30 @@ test("environment selection keeps mock fallback and requires an explicit model",
   );
 });
 
+test("missing model is persisted as the first agent failure on the default pipeline path", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  const previousModel = process.env.NOVELGEN_MODEL;
+  const saved: ReturnType<typeof initial>[] = [];
+  process.env.OPENAI_API_KEY = "test-secret";
+  delete process.env.NOVELGEN_MODEL;
+
+  try {
+    const failed = await executePipeline(initial(), {
+      save: async (state) => { saved.push(structuredClone(state)); },
+      writeArtifacts: async () => undefined,
+    });
+
+    assert.equal(failed.agents[0]!.status, "failed");
+    assert.equal(failed.agents[0]!.error, "Agent execution failed");
+    assert.deepEqual(saved.map(({ agents }) => agents[0]!.status), ["running", "failed"]);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousModel === undefined) delete process.env.NOVELGEN_MODEL;
+    else process.env.NOVELGEN_MODEL = previousModel;
+  }
+});
+
 test("provider error summaries redact credentials, tokens, hashes, and internal paths", () => {
   const message = sanitizeErrorMessage(
     "Bearer token_abc sk-live-secret file=/Users/geek/private.ts at (/opt/app/client.ts:1:2) C:\\Users\\geek\\private.ts abcdef0123456789abcdef0123456789",

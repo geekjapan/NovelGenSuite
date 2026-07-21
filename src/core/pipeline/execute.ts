@@ -135,7 +135,7 @@ async function runDrafting(runtime: PipelineRuntime, initial: PipelineProjectSta
 export async function executePipeline(
   initial: PipelineProjectState,
   runtime: PipelineRuntime,
-  generate: Generate = createGenerateFromEnv(),
+  generate?: Generate,
 ): Promise<PipelineProjectState> {
   if (initial.agents.every(({ status }) => status === "completed")) {
     await runtime.writeArtifacts(initial);
@@ -144,6 +144,7 @@ export async function executePipeline(
   if (initial.agents.some(({ status }) => status === "running")) throw new RunConflictError("run-conflict");
 
   let state = initial;
+  let resolvedGenerate = generate;
   for (const definition of agentDefinitions) {
     const agent = state.agents.find(({ id }) => id === definition.id)!;
     if (agent.status === "completed") continue;
@@ -155,10 +156,11 @@ export async function executePipeline(
     });
     state = await save(runtime, state);
     try {
+      resolvedGenerate ??= createGenerateFromEnv();
       if (definition.id === "drafting") {
-        state = await runDrafting(runtime, state, generate);
+        state = await runDrafting(runtime, state, resolvedGenerate);
       } else {
-        const output = await invoke(state, definition.id, generate);
+        const output = await invoke(state, definition.id, resolvedGenerate);
         state = {
           ...state,
           bible: mergeAgentOutput(state.bible, definition.id, output),

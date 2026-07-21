@@ -195,3 +195,4 @@ export type EditorOutput = z.infer<typeof EditorOutputSchema>;
 export type ContinuityOutput = z.infer<typeof ContinuityOutputSchema>;
 export type PublisherOutput = z.infer<typeof PublisherOutputSchema>;
 export type Chapter = z.infer<typeof ChapterSchema>;
+export type Part = z.infer<typeof PartSchema>;

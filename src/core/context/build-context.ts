@@ -7,6 +7,7 @@ import {
   PlotOutputSchema,
   WorldbuildingOutputSchema,
   type Chapter,
+  type Part,
   type CharacterOutput,
   type ConceptOutput,
   type PlotOutput,
@@ -33,10 +34,7 @@ export type AgentContext = {
   characters?: CharacterOutput;
   worldbuilding?: WorldbuildingOutput;
   plot?: PlotOutput;
-  chapterSkeleton?: Array<{
-    id: string;
-    number: number;
-    title: string;
+  chapterSkeleton?: Array<Pick<Part, "id" | "number" | "title"> & {
     chapters: Array<Pick<Chapter, "id" | "partNumber" | "number" | "role" | "lengthPlan">>;
   }>;
   outline?: Array<Pick<Chapter, "number" | "title" | "purpose" | "keyEvents" | "foreshadowing">>;
