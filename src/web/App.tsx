@@ -20,9 +20,10 @@ class ApiError extends Error {
 }
 
 async function api<T>(schema: ZodType<T>, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  let response: Response;
   let body: unknown;
   try {
+    response = await fetch(path, init);
     body = await response.json();
   } catch {
     throw new Error("サーバーとの通信に失敗しました。");
@@ -30,6 +31,7 @@ async function api<T>(schema: ZodType<T>, path: string, init?: RequestInit): Pro
   if (response.ok) {
     const result = schema.safeParse(body);
     if (result.success) return result.data;
+    console.error("API contract validation failed:", result.error);
   } else {
     const result = ErrorEnvelopeSchema.safeParse(body);
     if (result.success) throw new ApiError(result.data.error.code, result.data.error.message);
@@ -100,7 +102,9 @@ function ProjectList() {
         body: JSON.stringify({ prompt: data.get("prompt"), language: "ja", configuration }),
       });
       location.hash = `#/projects/${project.id}`;
-      void runProject(project.id).catch(() => undefined);
+      void runProject(project.id).catch((cause) => {
+        console.error("failed to trigger run", cause);
+      });
     } catch (cause) {
       setError(cause as Error);
       setStarting(false);
@@ -158,12 +162,21 @@ function ProjectView({ id }: { id: string }) {
 
   useEffect(() => {
     let active = true;
+    let interval: ReturnType<typeof setInterval> | undefined;
     const load = () => api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/state`)
-      .then((next) => { if (active) { setProject(next); setError(null); } })
+      .then((next) => {
+        if (!active) return;
+        setProject(next);
+        setError(null);
+        if (interval && next.agents.every(({ status }) => status === "completed")) {
+          clearInterval(interval);
+          interval = undefined;
+        }
+      })
       .catch((cause: Error) => { if (active) setError(cause); });
     void load();
-    const interval = setInterval(load, 1500);
-    return () => { active = false; clearInterval(interval); };
+    interval = setInterval(load, 1500);
+    return () => { active = false; if (interval) clearInterval(interval); };
   }, [id]);
 
   async function resume() {

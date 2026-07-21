@@ -60,7 +60,7 @@ export async function createProject(
       await writeProjectState(root, state);
       return state;
     } catch (error) {
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
   }
@@ -80,7 +80,7 @@ export async function writeProjectState(
     });
     await rename(temporary, join(directory, "state.json"));
   } catch (error) {
-    await rm(temporary, { force: true });
+    await rm(temporary, { force: true }).catch(() => {});
     throw error;
   }
 }
@@ -114,7 +114,14 @@ export async function listProjects(
   const states = await Promise.all(
     entries
       .filter((entry) => entry.isDirectory() && SAFE_ID.test(entry.name))
-      .map((entry) => readProjectState(root, entry.name)),
+      .map(async (entry) => {
+        try {
+          return await readProjectState(root, entry.name);
+        } catch (error) {
+          console.error(`Failed to read project state for ${entry.name}:`, error);
+          return undefined;
+        }
+      }),
   );
   return states
     .filter((state): state is PipelineProjectState => state !== undefined)
