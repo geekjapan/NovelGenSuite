@@ -5,6 +5,7 @@ import {
   agentDefinitions,
   mergeAgentOutput,
 } from "./agent-registry.js";
+import { ChapterOutlineOutputSchema } from "../../shared/agent-schemas.js";
 import { emptyStoryBible } from "../../shared/story-bible.js";
 import { StoryBibleSchema } from "../../shared/story-bible.js";
 import {
@@ -99,6 +100,27 @@ test("chapter outline schema rejects duplicate chapter numbers", () => {
       }],
     }],
   }).success, false);
+});
+
+test("chapter outline schema normalizes creative arrays to contract limits", () => {
+  const outline = canonicalOutputs["chapter-outline"];
+  const parsed = ChapterOutlineOutputSchema.parse({
+    ...outline,
+    parts: [{
+      ...outline.parts[0]!,
+      chapters: outline.parts[0]!.chapters.map((chapter) => ({
+        ...chapter,
+        keyEvents: ["出来事1", "出来事2", "出来事3"],
+        foreshadowing: ["伏線1", "伏線2"],
+      })),
+    }],
+    foreshadowingTracker: Array.from({ length: 4 }, () =>
+      outline.foreshadowingTracker[0]),
+  });
+
+  assert.equal(parsed.parts[0]!.chapters[0]!.keyEvents.length, 2);
+  assert.equal(parsed.parts[0]!.chapters[0]!.foreshadowing.length, 1);
+  assert.equal(parsed.foreshadowingTracker.length, 3);
 });
 
 test("malformed extraction fixtures remain separate from canonical outputs", () => {

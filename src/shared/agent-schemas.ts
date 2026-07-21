@@ -94,6 +94,13 @@ export const PartSchema = z.object({
   chapters: z.array(ChapterSchema).min(1).transform((values) => values.slice(0, 64)),
 });
 
+const ChapterOutlinePartSchema = PartSchema.extend({
+  chapters: z.array(ChapterSchema.extend({
+    keyEvents: list(text(120), 2),
+    foreshadowing: list(text(120), 1),
+  })).min(1).transform((values) => values.slice(0, 64)),
+});
+
 export const StyleGuideSchema = z.object({
   pov: text(80),
   tense: text(80),
@@ -112,9 +119,9 @@ export const ForeshadowingTrackerItemSchema = z.object({
 });
 
 export const ChapterOutlineOutputSchema = z.object({
-  parts: z.array(PartSchema).min(1).transform((values) => values.slice(0, 16)),
+  parts: z.array(ChapterOutlinePartSchema).min(1).transform((values) => values.slice(0, 16)),
   styleGuide: StyleGuideSchema,
-  foreshadowingTracker: list(ForeshadowingTrackerItemSchema, 8),
+  foreshadowingTracker: list(ForeshadowingTrackerItemSchema, 3),
 }).superRefine(({ parts }, context) => {
   const chapters = parts.flatMap((part) => part.chapters);
   if (new Set(chapters.map(({ number }) => number)).size !== chapters.length) {
