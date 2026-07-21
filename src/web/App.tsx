@@ -1,34 +1,17 @@
 import { FormEvent, useEffect, useState } from "react";
+import type { ZodType } from "zod";
 
-import type { ErrorCode, ProjectState } from "../shared/contracts.js";
+import {
+  ErrorEnvelopeSchema,
+  ProjectListResponseSchema,
+  WebProjectStateSchema,
+  type ErrorCode,
+  type ProjectSummary,
+  type WebProjectState as Project,
+} from "../shared/contracts.js";
 import { chapterProgress, elapsedSeconds } from "./model.js";
 
-type Status = "pending" | "running" | "completed" | "failed";
-type Project = Pick<ProjectState, "id" | "prompt" | "meta"> & {
-  agents: Array<{
-    id: string;
-    status: Status;
-    startedAt?: string;
-    completedAt?: string;
-    error?: string;
-  }>;
-  chapterRuns: Array<{ status: string }>;
-  manuscript: string | null;
-  bible: {
-    editorReport?: unknown;
-    continuityReport?: unknown;
-    publisherPackage?: unknown;
-  };
-};
-type ProjectSummary = { id: string; createdAt: string };
-
-const knownCodes = new Set<ErrorCode>([
-  "unsupported-language",
-  "unsupported-setting",
-  "validation-error",
-  "project-not-found",
-  "run-conflict",
-]);
+type Status = Project["agents"][number]["status"];
 
 class ApiError extends Error {
   constructor(readonly code: ErrorCode, message: string) {
@@ -36,13 +19,20 @@ class ApiError extends Error {
   }
 }
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
+async function api<T>(schema: ZodType<T>, path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
-  const body: unknown = await response.json();
-  if (response.ok) return body as T;
-  const error = (body as { error?: { code?: unknown; message?: unknown } }).error;
-  if (typeof error?.code === "string" && knownCodes.has(error.code as ErrorCode) && typeof error.message === "string") {
-    throw new ApiError(error.code as ErrorCode, error.message);
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error("サーバーとの通信に失敗しました。");
+  }
+  if (response.ok) {
+    const result = schema.safeParse(body);
+    if (result.success) return result.data;
+  } else {
+    const result = ErrorEnvelopeSchema.safeParse(body);
+    if (result.success) throw new ApiError(result.data.error.code, result.data.error.message);
   }
   throw new Error("サーバーとの通信に失敗しました。");
 }
@@ -81,7 +71,7 @@ function ErrorNotice({ error }: { error: Error | null }) {
 }
 
 async function runProject(id: string) {
-  return api<Project>(`/projects/${encodeURIComponent(id)}/run`, { method: "POST" });
+  return api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/run`, { method: "POST" });
 }
 
 function ProjectList() {
@@ -90,7 +80,7 @@ function ProjectList() {
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
-    api<ProjectSummary[]>("/projects").then(setProjects).catch((cause: Error) => setError(cause));
+    api(ProjectListResponseSchema, "/projects").then(setProjects).catch((cause: Error) => setError(cause));
   }, []);
 
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -104,7 +94,7 @@ function ProjectList() {
     if (chapterCount) configuration.chapterCount = Number(chapterCount);
     if (chapterLength) configuration.chapterLength = Number(chapterLength);
     try {
-      const project = await api<Project>("/projects", {
+      const project = await api(WebProjectStateSchema, "/projects", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ prompt: data.get("prompt"), language: "ja", configuration }),
@@ -168,7 +158,7 @@ function ProjectView({ id }: { id: string }) {
 
   useEffect(() => {
     let active = true;
-    const load = () => api<Project>(`/projects/${encodeURIComponent(id)}/state`)
+    const load = () => api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/state`)
       .then((next) => { if (active) { setProject(next); setError(null); } })
       .catch((cause: Error) => { if (active) setError(cause); });
     void load();
