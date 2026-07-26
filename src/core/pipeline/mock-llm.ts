@@ -7,7 +7,9 @@ export type GenerateRequest = {
   context: AgentContext;
   chapterCount: number;
   chapterNumber?: number;
+  operation?: "generate" | "retry" | "regenerate" | "auto-expand";
   compact: boolean;
+  signal?: AbortSignal;
 };
 
 export type Generate = (request: GenerateRequest) => Promise<string>;

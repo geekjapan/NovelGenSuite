@@ -87,3 +87,14 @@ test("each role asks only for its declared English JSON keys", () => {
     for (const key of expected[id]) assert.match(prompt.user, new RegExp(`\\b${key}\\b`));
   }
 });
+
+test("creative output language follows the project language", () => {
+  const context = agentDefinitions[0].buildContext({ ...input, language: "en" });
+  const prompt = buildPrompt({
+    agentId: "concept",
+    context,
+    chapterCount: 1,
+    compact: false,
+  });
+  assert.match(prompt.system, /creative text values must be English/);
+});

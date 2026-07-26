@@ -3,11 +3,13 @@ import type { GenerateRequest } from "../pipeline/mock-llm.js";
 
 export const promptAgentIds = agentDefinitions.map(({ id }) => id);
 
-const system = [
+const system = (request: GenerateRequest) => [
   "Return valid JSON only.",
   "Do not use markdown, code fences, explanations, or comments.",
   "Close every quote and bracket.",
-  "All JSON keys must be English. All creative text values must be Japanese.",
+  `All JSON keys must be English. All creative text values must be ${
+    request.context.language === "ja" ? "Japanese" : "English"
+  }.`,
 ].join(" ");
 
 const instructions: Record<AgentId, string> = {
@@ -39,11 +41,14 @@ const compactContext = (request: GenerateRequest) => {
 
 export function buildPrompt(request: GenerateRequest) {
   return {
-    system,
+    system: system(request),
     user: [
       `ROLE=${request.agentId}`,
       request.compact ? "COMPACT RETRY: 最小限の短いJSONで契約を満たす。" : "",
       instructions[request.agentId],
+      request.operation === "auto-expand"
+        ? "AUTO EXPAND: CONTEXT.currentDraft を保持して不足する描写を加え、章全体を返す。"
+        : "",
       request.agentId === "chapter-outline"
         ? `SKELETON=${JSON.stringify(request.context.chapterSkeleton)}`
         : "",

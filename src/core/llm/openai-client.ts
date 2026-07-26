@@ -34,13 +34,15 @@ type OpenAIOptions = {
   apiKey: string;
   model: string;
   fetch?: typeof globalThis.fetch;
-  signal?: AbortSignal;
 };
 
 const httpError = (status: number) => {
   if (status === 401 || status === 403) return new LlmError("OpenAI authentication failed", false);
   if (status === 402) return new LlmError("OpenAI billing or credit check failed", false);
-  return new LlmError(`OpenAI request failed with status ${status}`, true);
+  return new LlmError(
+    `OpenAI request failed with status ${status}`,
+    status === 408 || status === 429 || status >= 500,
+  );
 };
 
 export function createOpenAIGenerate(options: OpenAIOptions): Generate {
@@ -64,7 +66,7 @@ export function createOpenAIGenerate(options: OpenAIOptions): Generate {
             { role: "user", content: prompt.user },
           ],
         }),
-        signal: options.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+        signal: request.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
       });
     } catch (cause) {
       if (cause instanceof Error && cause.name === "TimeoutError") {

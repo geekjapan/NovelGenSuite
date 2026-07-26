@@ -29,9 +29,18 @@ export const languagePolicies = {
     omissionMarker: "…省略…",
     excerptMarker: "…抜粋…",
   },
+  en: {
+    locale: "en-US",
+    lengthUnit: "words",
+    promptHeadCharacters: 600,
+    promptTailCharacters: 300,
+    previousChapterTailCharacters: 600,
+    omissionMarker: "…omitted…",
+    excerptMarker: "…excerpt…",
+  },
 } as const;
 
-export const SupportedLanguageSchema = z.enum(["ja"]);
+export const SupportedLanguageSchema = z.enum(["ja", "en"]);
 export type SupportedLanguage = z.infer<typeof SupportedLanguageSchema>;
 
 export function findLanguagePolicy(language: string) {

@@ -46,7 +46,6 @@ const close = (server: Server) => new Promise<void>((resolve, reject) =>
 test("fake OpenAI server completes the pipeline after compact fenced-JSON recovery", async () => {
   const requests: Array<{ authorization?: string; body: any }> = [];
   let conceptAttempts = 0;
-  let draftIndex = 0;
   const { server, baseUrl } = await listen((request, response) => {
     let raw = "";
     request.setEncoding("utf8");
@@ -56,7 +55,10 @@ test("fake OpenAI server completes the pipeline after compact fenced-JSON recove
       requests.push({ authorization: request.headers.authorization, body });
       const user = body.messages[1].content as string;
       const id = /ROLE=([^\n]+)/.exec(user)?.[1] as keyof typeof canonicalOutputs;
-      let output = id === "drafting" ? canonicalOutputs.drafting[draftIndex++] : canonicalOutputs[id];
+      const chapterNumber = Number(/"targetChapter":\{"number":(\d+)/.exec(user)?.[1] ?? 1);
+      const output = id === "drafting"
+        ? canonicalOutputs.drafting[chapterNumber - 1]
+        : canonicalOutputs[id];
       let content = JSON.stringify(output);
       if (id === "concept" && conceptAttempts++ === 0) content = '{"logline":"broken"';
       else if (id === "concept") content = `\`\`\`json\n${content}\n\`\`\``;
