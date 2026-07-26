@@ -197,3 +197,8 @@ export function mergeAgentOutput(
   const definition = agentDefinitions.find((candidate) => candidate.id === id) as Definition;
   return definition.merge(bible, definition.normalize(rawOutput) as never);
 }
+
+export function normalizeAgentOutput(id: AgentId, rawOutput: unknown): unknown {
+  const definition = agentDefinitions.find((candidate) => candidate.id === id) as Definition;
+  return definition.normalize(rawOutput);
+}

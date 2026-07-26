@@ -101,7 +101,7 @@ for (const status of [401, 402] as const) {
       );
       assert.equal(requests, 1);
       assert.equal(failed.agents[0]!.status, "failed");
-      assert.equal(failed.agents[0]!.error, "Agent execution failed");
+      assert.match(failed.agents[0]!.error!, /ください/);
       assert.doesNotMatch(JSON.stringify(failed), /test-secret|provider-secret|\/Users\/private/);
     } finally {
       await close(server);
@@ -174,7 +174,7 @@ test("missing model is persisted as the first agent failure on the default pipel
     });
 
     assert.equal(failed.agents[0]!.status, "failed");
-    assert.equal(failed.agents[0]!.error, "Agent execution failed");
+    assert.match(failed.agents[0]!.error!, /ください/);
     assert.deepEqual(saved.map(({ agents }) => agents[0]!.status), ["running", "failed"]);
   } finally {
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -186,10 +186,12 @@ test("missing model is persisted as the first agent failure on the default pipel
 
 test("provider error summaries redact credentials, tokens, hashes, and internal paths", () => {
   const message = sanitizeErrorMessage(
-    "Bearer token_abc sk-live-secret file=/Users/geek/private.ts at (/opt/app/client.ts:1:2) C:\\Users\\geek\\private.ts abcdef0123456789abcdef0123456789",
+    "Bearer token_abc API key: plain-secret access token: jwt-secret sk-live-secret file=/Users/geek/private.ts at (/opt/app/client.ts:1:2) C:\\Users\\geek\\private.ts abcdef0123456789abcdef0123456789",
   );
   assert.equal(message.includes("token_abc"), false);
   assert.equal(message.includes("sk-live-secret"), false);
+  assert.equal(message.includes("plain-secret"), false);
+  assert.equal(message.includes("jwt-secret"), false);
   assert.equal(message.includes("/Users/geek"), false);
   assert.equal(message.includes("/opt/app"), false);
   assert.equal(message.includes("C:\\Users\\geek"), false);

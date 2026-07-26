@@ -21,6 +21,7 @@ export function sanitizeErrorMessage(value: unknown): string {
   const message = value instanceof Error ? value.message : String(value);
   return message
     .replace(/Bearer\s+\S+/gi, "[redacted]")
+    .replace(/\b(?:api[\s_-]?key|access[\s_-]?token|secret)\s*[:=]\s*\S+/gi, "[redacted]")
     .replace(/\b(?:sk|token)[-_][A-Za-z0-9._-]+\b/gi, "[redacted]")
     .replace(/\b[a-f0-9]{32,}\b/gi, "[redacted]")
     .replace(/\/(?:[A-Za-z0-9._-]+\/)+[A-Za-z0-9._-]+(?::\d+(?::\d+)?)?/g, "[redacted]")
@@ -29,8 +30,9 @@ export function sanitizeErrorMessage(value: unknown): string {
 }
 
 export function shouldCompactRetry(cause: unknown): boolean {
+  if (cause instanceof Error && cause.name === "AbortError") return false;
   if (cause instanceof LlmError) return cause.retryable;
-  return !(cause instanceof Error && cause.name === "AbortError");
+  return true;
 }
 
 type OpenAIOptions = {
@@ -78,6 +80,9 @@ export function createOpenAIGenerate(options: OpenAIOptions): Generate {
         throw new LlmError("OpenAI request timed out", true, "timeout");
       }
       if (cause instanceof Error && cause.name === "AbortError") {
+        if (request.signal?.reason instanceof Error && request.signal.reason.name === "TimeoutError") {
+          throw new LlmError("OpenAI request timed out", true, "timeout");
+        }
         throw new LlmError("OpenAI request aborted", false);
       }
       throw new LlmError(sanitizeErrorMessage(cause), true);
