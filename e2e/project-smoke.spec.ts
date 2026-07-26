@@ -8,6 +8,7 @@ test("作成した小説を九役完了後とプロジェクト再読込後に�
   await page.getByRole("button", { name: "生成を開始" }).click();
 
   await expect(page).toHaveURL(/#\/projects\/[A-Za-z0-9_-]+$/);
+  await expect(page.getByRole("button", { name: "開始/再試行" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: prompt })).toBeVisible();
   await expect(page.getByText("完了", { exact: true })).toHaveCount(9);
   await expect(page.getByRole("heading", { name: "完成した小説" })).toBeVisible();
@@ -19,4 +20,22 @@ test("作成した小説を九役完了後とプロジェクト再読込後に�
   await expect(page).toHaveURL(projectUrl);
   await expect(page.getByRole("heading", { name: "完成した小説" })).toBeVisible();
   await expect(page.getByText("雨坂郵便局の蛍光灯は", { exact: false })).toBeVisible();
+});
+
+test("開始通信に失敗した pending プロジェクトを画面から再試行できる", async ({ page }) => {
+  let runRequests = 0;
+  await page.route("**/projects/*/run", (route) => {
+    runRequests += 1;
+    return runRequests === 1 ? route.abort("failed") : route.continue();
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "生成を開始" }).click();
+
+  await expect(page).toHaveURL(/#\/projects\/[A-Za-z0-9_-]+$/);
+  await expect(page.getByRole("button", { name: "開始/再試行" })).toBeVisible();
+  await page.getByRole("button", { name: "開始/再試行" }).click();
+
+  await expect(page.getByText("完了", { exact: true })).toHaveCount(9);
+  expect(runRequests).toBe(2);
 });

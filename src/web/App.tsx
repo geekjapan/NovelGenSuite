@@ -76,7 +76,7 @@ async function runProject(id: string) {
   return api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/run`, { method: "POST" });
 }
 
-function ProjectList() {
+function ProjectList({ onRunFailure }: { onRunFailure: (id: string) => void }) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [error, setError] = useState<Error | null>(null);
   const [starting, setStarting] = useState(false);
@@ -104,6 +104,7 @@ function ProjectList() {
       location.hash = `#/projects/${project.id}`;
       void runProject(project.id).catch((cause) => {
         console.error("failed to trigger run", cause);
+        onRunFailure(project.id);
       });
     } catch (cause) {
       setError(cause as Error);
@@ -155,7 +156,7 @@ function Report({ title, value }: { title: string; value: unknown }) {
   return <details className="report"><summary>{title}<span>開く</span></summary><pre>{JSON.stringify(value, null, 2)}</pre></details>;
 }
 
-function ProjectView({ id }: { id: string }) {
+function ProjectView({ id, runFailed, onRunStarted }: { id: string; runFailed: boolean; onRunStarted: () => void }) {
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [resuming, setResuming] = useState(false);
@@ -184,6 +185,7 @@ function ProjectView({ id }: { id: string }) {
     setError(null);
     try {
       setProject(await runProject(id));
+      onRunStarted();
     } catch (cause) {
       setError(cause as Error);
     } finally {
@@ -198,6 +200,7 @@ function ProjectView({ id }: { id: string }) {
   if (!project) return <main className="page narrow"><a className="back" href="#/">← 一覧へ戻る</a><p className="loading">状態を読み込んでいます…</p><ErrorNotice error={error} /></main>;
 
   const failed = project.agents.filter(({ status }) => status === "failed");
+  const startFailed = runFailed && project.agents.every(({ status }) => status === "pending");
   const completed = project.agents.filter(({ status }) => status === "completed").length;
   const finished = completed === project.agents.length;
   return <main className="page narrow">
@@ -207,6 +210,13 @@ function ProjectView({ id }: { id: string }) {
       <div className="total"><strong>{completed}</strong><span>/ 9 ROLES</span></div>
     </header>
     <ErrorNotice error={error} />
+
+    {startFailed ? <section className="failure" role="alert">
+      <p className="eyebrow">RUN NOT STARTED</p>
+      <h2>生成を開始できませんでした</h2>
+      <p>サーバーとの通信に失敗しました。もう一度開始できます。</p>
+      <button className="primary" onClick={resume} disabled={resuming}>{resuming ? "開始しています…" : "開始/再試行"}<span aria-hidden="true">↻</span></button>
+    </section> : null}
 
     {failed.length > 0 ? <section className="failure" role="alert">
       <p className="eyebrow">RUN INTERRUPTED</p>
@@ -246,6 +256,9 @@ function ProjectView({ id }: { id: string }) {
 
 export function App() {
   const hash = useHash();
+  const [failedRunId, setFailedRunId] = useState<string | null>(null);
   const match = /^#\/projects\/([A-Za-z0-9_-]+)$/.exec(hash);
-  return <><header className="topbar"><a href="#/" className="brand">NOVEL<span>GEN</span></a><p>STORY PRODUCTION SYSTEM</p></header>{match ? <ProjectView id={match[1]} /> : <ProjectList />}</>;
+  return <><header className="topbar"><a href="#/" className="brand">NOVEL<span>GEN</span></a><p>STORY PRODUCTION SYSTEM</p></header>{match
+    ? <ProjectView id={match[1]} runFailed={failedRunId === match[1]} onRunStarted={() => setFailedRunId(null)} />
+    : <ProjectList onRunFailure={setFailedRunId} />}</>;
 }
