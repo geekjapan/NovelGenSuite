@@ -66,7 +66,7 @@ test("projects five canonical chapters and keeps length status informational", a
   assert.ok(completed.chapterRuns.every(({ lengthStatus }: any) => lengthStatus === "too-short"));
 });
 
-test("failed drafting resumes without replacing completed chapters", async () => {
+test("drafting output failure falls back and can be retried without replacing completed chapters", async () => {
   const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
   let failChapterTwo = true;
   const seen: Array<{ chapter?: number; compact: boolean; prior: number }> = [];
@@ -83,10 +83,15 @@ test("failed drafting resumes without replacing completed chapters", async () =>
   const created = await project(app);
 
   const failed = await (await app.request(`/projects/${created.id}/run`, { method: "POST" })).json();
-  assert.equal(failed.agents.find(({ id }: any) => id === "drafting").status, "failed");
+  assert.equal(failed.agents.find(({ id }: any) => id === "drafting").status, "completed");
+  assert.equal(failed.chapterRuns[1].fallbackUsed, true);
+  assert.equal(failed.chapterRuns[1].autoRecovered, true);
   const firstDraft = failed.bible.chapters[0].draft;
-  assert.equal(failed.bible.chapters[1].draft, undefined);
-  assert.deepEqual(seen.filter(({ chapter }) => chapter === 2).map(({ compact }) => compact), [false, true]);
+  assert.ok(failed.bible.chapters[1].draft);
+  assert.deepEqual(
+    seen.filter(({ chapter }) => chapter === 2).map(({ compact }) => compact),
+    [false, true, false],
+  );
 
   failChapterTwo = false;
   const resumed = await (await app.request(`/projects/${created.id}/run`, {
@@ -98,7 +103,7 @@ test("failed drafting resumes without replacing completed chapters", async () =>
   assert.ok(seen.some(({ chapter, prior }) => chapter === 2 && prior === 1));
 });
 
-test("batch drafting records a failed chapter and continues to the next chapter", async () => {
+test("batch drafting records a fallback chapter and continues to the next chapter", async () => {
   const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
   const attempted: number[] = [];
   const generate: Generate = async (request) => {
@@ -112,10 +117,11 @@ test("batch drafting records a failed chapter and continues to the next chapter"
   const created = await project(app, { chapterCount: 3, chapterLength: 100 });
   const failed = await (await app.request(`/projects/${created.id}/run`, { method: "POST" })).json();
 
-  assert.equal(failed.chapterRuns[1].status, "failed");
+  assert.equal(failed.chapterRuns[1].status, "completed");
+  assert.equal(failed.chapterRuns[1].fallbackUsed, true);
   assert.equal(failed.chapterRuns[2].status, "completed");
   assert.ok(attempted.includes(3));
-  assert.equal(failed.bible.chapters.filter(({ draft }: any) => draft).length, 2);
+  assert.equal(failed.bible.chapters.filter(({ draft }: any) => draft).length, 3);
 });
 
 test("failed auto-expansion keeps the generated chapter body and marks manual follow-up", async () => {
@@ -261,21 +267,25 @@ test("a corrupted project neither blocks other requests after restart nor appear
   assert.deepEqual(listed.map(({ id }: any) => id), [created.id]);
 });
 
-test("zod failure retries compact once, records the role failure, and stops", async () => {
+test("zod failure retries compact once, applies local fallback, and continues", async () => {
   const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
   const attempts: boolean[] = [];
   const generate: Generate = async (request) => {
-    attempts.push(request.compact);
-    return JSON.stringify({ logline: "incomplete concept" });
+    if (request.agentId === "concept") {
+      attempts.push(request.compact);
+      return JSON.stringify({ logline: "incomplete concept" });
+    }
+    return generateMock(request);
   };
   const app = createApp({ projectsRoot: root, generate });
   const created = await project(app);
   const failed = await (await app.request(`/projects/${created.id}/run`, { method: "POST" })).json();
 
   assert.deepEqual(attempts, [false, true]);
-  assert.equal(failed.agents[0].status, "failed");
-  assert.equal(failed.agents[0].error, "Agent execution failed");
-  assert.ok(failed.agents.slice(1).every(({ status }: any) => status === "pending"));
+  assert.equal(failed.agents[0].status, "completed");
+  assert.equal(failed.agents[0].fallbackUsed, true);
+  assert.equal(failed.agents[0].autoRecovered, true);
+  assert.ok(failed.agents.slice(1).every(({ status }: any) => status === "completed"));
 });
 
 test("persisted agent errors never contain provider secrets or internal paths", async () => {
@@ -287,7 +297,7 @@ test("persisted agent errors never contain provider secrets or internal paths", 
   const created = await project(app);
   const failed = await (await app.request(`/projects/${created.id}/run`, { method: "POST" })).json();
 
-  assert.equal(failed.agents[0].error, "Agent execution failed");
+  assert.match(failed.agents[0].error, /もう一度実行/);
   assert.equal(JSON.stringify(failed).includes("UNRECOGNIZED_SECRET_FORMAT"), false);
   assert.equal(JSON.stringify(failed).includes("/Users/private"), false);
 });

@@ -16,6 +16,11 @@ const AgentRunSchema = z.object({
   startedAt: z.iso.datetime().optional(),
   completedAt: z.iso.datetime().optional(),
   error: z.string().optional(),
+  attemptCount: z.number().int().nonnegative().optional(),
+  maxAttempts: z.number().int().positive().optional(),
+  lastRetryError: z.string().optional(),
+  fallbackUsed: z.boolean().optional(),
+  autoRecovered: z.boolean().optional(),
   attempts: z.array(CancellationAttemptSchema).optional(),
 });
 
@@ -25,6 +30,11 @@ const ChapterRunSchema = z.object({
   lengthStatus: z.enum(["too-short", "under", "near", "over"]).optional(),
   needsExpansion: z.boolean().optional(),
   error: z.string().optional(),
+  attemptCount: z.number().int().nonnegative().optional(),
+  maxAttempts: z.number().int().positive().optional(),
+  lastRetryError: z.string().optional(),
+  fallbackUsed: z.boolean().optional(),
+  autoRecovered: z.boolean().optional(),
   attempts: z.array(CancellationAttemptSchema).optional(),
 });
 

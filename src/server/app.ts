@@ -24,7 +24,15 @@ function error(code: ErrorCode, message: string): ErrorEnvelope {
   return { error: { code, message } };
 }
 
-export function createApp({ projectsRoot, generate }: { projectsRoot: string; generate?: Generate }) {
+export function createApp({
+  projectsRoot,
+  generate,
+  alternateGenerate,
+}: {
+  projectsRoot: string;
+  generate?: Generate;
+  alternateGenerate?: Generate;
+}) {
   const app = new Hono();
   const reconciliation = reconcileOrphanedRuns(projectsRoot);
   const pipelineRuntime = createPipelineRuntime(projectsRoot);
@@ -106,6 +114,7 @@ export function createApp({ projectsRoot, generate }: { projectsRoot: string; ge
               chapterNumber: request.data.chapterNumber,
             },
         signal: controller.signal,
+        alternateGenerate,
       }));
     } catch (cause) {
       if (cause instanceof RunConflictError) {

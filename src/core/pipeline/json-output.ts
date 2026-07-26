@@ -1,9 +1,30 @@
+import { runInNewContext } from "node:vm";
+
 import type { z } from "zod";
 
 const fenced = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/i;
 
 // 開始候補の走査は各試行が O(N) のため、無制限だと不正入力で O(N^2) に達しうる
 const MAX_START_ATTEMPTS = 10;
+
+export class JsonParseTimeoutError extends RangeError {
+  constructor() {
+    super("parse-timeout");
+  }
+}
+
+function parseJson(value: string, timeoutMs?: number): unknown {
+  if (timeoutMs === undefined) return JSON.parse(value);
+  if (timeoutMs <= 0) throw new JsonParseTimeoutError();
+  try {
+    return runInNewContext("JSON.parse(value)", { value }, { timeout: timeoutMs });
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code === "ERR_SCRIPT_EXECUTION_TIMEOUT") {
+      throw new JsonParseTimeoutError();
+    }
+    throw cause;
+  }
+}
 
 function balancedJson(value: string): string | undefined {
   let attempts = 0;
@@ -33,14 +54,15 @@ function balancedJson(value: string): string | undefined {
   return undefined;
 }
 
-export function extractJson(raw: string): unknown {
+export function extractJson(raw: string, timeoutMs?: number): unknown {
   const value = fenced.exec(raw)?.[1] ?? raw.trim();
   try {
-    return JSON.parse(value);
-  } catch {
+    return parseJson(value, timeoutMs);
+  } catch (cause) {
+    if (cause instanceof JsonParseTimeoutError) throw cause;
     const extracted = balancedJson(value);
     if (!extracted) throw new Error("JSON object is missing or incomplete");
-    return JSON.parse(extracted);
+    return parseJson(extracted, timeoutMs);
   }
 }
 
