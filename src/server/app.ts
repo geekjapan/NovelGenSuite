@@ -3,22 +3,39 @@ import { z } from "zod";
 
 import {
   executePipeline,
+  revisePlan,
   RunConflictError,
 } from "../core/pipeline/execute.js";
 import type { Generate } from "../core/pipeline/mock-llm.js";
 import {
+  approveChapterOutline,
+  InvalidWorkflowTransitionError,
+  moveToReachedStage,
+  PipelineProjectStateSchema,
+} from "../core/pipeline/project-state.js";
+import {
   createProject,
   listProjects,
   readProjectState,
+  writeProjectState,
 } from "../core/store/state-json.js";
+import {
+  ChapterOutlineOutputSchema,
+} from "../shared/agent-schemas.js";
 import {
   CreateProjectRequestSchema,
   findLanguagePolicy,
+  WorkflowStageSchema,
   type ErrorCode,
   type ErrorEnvelope,
   type SupportedLanguage,
 } from "../shared/contracts.js";
-import { createPipelineRuntime, reconcileOrphanedRuns } from "./pipeline-runtime.js";
+import {
+  createPipelineRuntime,
+  readApprovalArtifact,
+  reconcileOrphanedRuns,
+  writeApprovalArtifact,
+} from "./pipeline-runtime.js";
 
 function error(code: ErrorCode, message: string): ErrorEnvelope {
   return { error: { code, message } };
@@ -40,10 +57,18 @@ export function createApp({
   const RunRequestSchema = z.discriminatedUnion("operation", [
     z.object({ operation: z.literal("resume") }),
     z.object({
-      operation: z.enum(["retry", "regenerate"]),
+      operation: z.enum(["retry", "regenerate", "expand", "revise"]),
       chapterNumber: z.number().int().positive(),
+      instruction: z.string().trim().max(2_000).optional(),
     }),
   ]).default({ operation: "resume" });
+  const StageRequestSchema = z.object({
+    stage: WorkflowStageSchema,
+    confirmed: z.boolean().default(false),
+  });
+  const PlanRevisionRequestSchema = z.object({
+    instruction: z.string().trim().min(1).max(2_000),
+  });
 
   app.use("*", async (_context, next) => {
     await reconciliation;
@@ -65,10 +90,6 @@ export function createApp({
     if (!findLanguagePolicy(result.data.language)) {
       return context.json(error("unsupported-language", "指定された言語には対応していません。"), 400);
     }
-    if (result.data.configuration.requireApproval) {
-      return context.json(error("unsupported-setting", "承認ゲートにはまだ対応していません。"), 400);
-    }
-
     const state = await createProject(projectsRoot, {
       ...result.data,
       language: result.data.language as SupportedLanguage,
@@ -85,6 +106,123 @@ export function createApp({
     return state
       ? context.json(state)
       : context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+  });
+
+  app.post("/projects/:id/stage", async (context) => {
+    const id = context.req.param("id");
+    const state = await readProjectState(projectsRoot, id);
+    if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+    if (activeRuns.has(id) || state.agents.some(({ status }) => status === "running")) {
+      return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
+    }
+    const request = StageRequestSchema.safeParse(await context.req.json().catch(() => undefined));
+    if (!request.success) {
+      return context.json(error("validation-error", "段階遷移を確認してください。"), 400);
+    }
+    try {
+      const next = PipelineProjectStateSchema.parse(moveToReachedStage(
+        state,
+        request.data.stage,
+        request.data.confirmed,
+      ));
+      await writeProjectState(projectsRoot, next);
+      return context.json(next);
+    } catch (cause) {
+      if (cause instanceof InvalidWorkflowTransitionError) {
+        return context.json(error(
+          "invalid-transition",
+          cause.message === "confirmation-required"
+            ? "前の段階へ戻るには確認が必要です。"
+            : "未到達の段階へは移動できません。",
+        ), 409);
+      }
+      throw cause;
+    }
+  });
+
+  app.put("/projects/:id/outline", async (context) => {
+    const id = context.req.param("id");
+    const state = await readProjectState(projectsRoot, id);
+    if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+    if (
+      !["approval", "planning"].includes(state.workflow.stage)
+      || state.agents.find(({ id: agentId }) => agentId === "chapter-outline")?.status !== "completed"
+    ) {
+      return context.json(error("invalid-transition", "章構成はまだ承認できません。"), 409);
+    }
+    if (activeRuns.has(id) || state.agents.some(({ status }) => status === "running")) {
+      return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
+    }
+    const outline = ChapterOutlineOutputSchema.safeParse(
+      await context.req.json().catch(() => undefined),
+    );
+    if (!outline.success) {
+      return context.json(error("validation-error", "章構成を確認してください。"), 400);
+    }
+    await writeApprovalArtifact(projectsRoot, state, outline.data);
+    return context.json(outline.data);
+  });
+
+  app.post("/projects/:id/approve", async (context) => {
+    const id = context.req.param("id");
+    const state = await readProjectState(projectsRoot, id);
+    if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+    if (
+      !["approval", "planning"].includes(state.workflow.stage)
+      || state.agents.find(({ id: agentId }) => agentId === "chapter-outline")?.status !== "completed"
+    ) {
+      return context.json(error("invalid-transition", "章構成はまだ承認できません。"), 409);
+    }
+    if (activeRuns.has(id) || state.agents.some(({ status }) => status === "running")) {
+      return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
+    }
+    try {
+      const next = PipelineProjectStateSchema.parse(approveChapterOutline(
+        state,
+        await readApprovalArtifact(projectsRoot, id),
+      ));
+      await writeProjectState(projectsRoot, next);
+      return context.json(next);
+    } catch (cause) {
+      if (cause instanceof InvalidWorkflowTransitionError || cause instanceof z.ZodError) {
+        return context.json(error("validation-error", "章構成を確認してください。"), 400);
+      }
+      throw cause;
+    }
+  });
+
+  app.post("/projects/:id/plan/revise", async (context) => {
+    const id = context.req.param("id");
+    const state = await readProjectState(projectsRoot, id);
+    if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+    if (activeRuns.has(id) || state.agents.some(({ status }) => status === "running")) {
+      return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
+    }
+    if (
+      state.workflow.stage !== "planning"
+      || state.agents.find(({ id: agentId }) => agentId === "chapter-outline")?.status !== "completed"
+    ) {
+      return context.json(error("invalid-transition", "計画段階へ戻ってから改稿してください。"), 409);
+    }
+    const request = PlanRevisionRequestSchema.safeParse(
+      await context.req.json().catch(() => undefined),
+    );
+    if (!request.success) {
+      return context.json(error("validation-error", "改稿指示を入力してください。"), 400);
+    }
+    const controller = new AbortController();
+    activeRuns.set(id, controller);
+    try {
+      return context.json(await revisePlan(
+        state,
+        pipelineRuntime,
+        request.data.instruction,
+        generate,
+        controller.signal,
+      ));
+    } finally {
+      activeRuns.delete(id);
+    }
   });
 
   app.post("/projects/:id/run", async (context) => {
@@ -110,9 +248,10 @@ export function createApp({
         chapterOperation: request.data.operation === "resume"
           ? { type: "resume" }
           : {
-              type: request.data.operation,
-              chapterNumber: request.data.chapterNumber,
-            },
+            type: request.data.operation,
+            chapterNumber: request.data.chapterNumber,
+            instruction: request.data.instruction,
+          },
         signal: controller.signal,
         alternateGenerate,
       }));
