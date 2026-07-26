@@ -1,9 +1,13 @@
 import { z } from "zod";
 
 import {
+  ChapterSchema,
   ContinuityOutputSchema,
   EditorOutputSchema,
+  ForeshadowingTrackerItemSchema,
+  PartSchema,
   PublisherOutputSchema,
+  StyleGuideSchema,
 } from "./agent-schemas.js";
 
 export const DEFAULT_CONFIGURATION = {
@@ -18,6 +22,15 @@ export const ConfigurationSchema = z.object({
   requireApproval: z.boolean().default(DEFAULT_CONFIGURATION.requireApproval),
 });
 export type Configuration = z.infer<typeof ConfigurationSchema>;
+
+export const WorkflowStageSchema = z.enum([
+  "launcher",
+  "planning",
+  "approval",
+  "drafting",
+  "final",
+]);
+export type WorkflowStage = z.infer<typeof WorkflowStageSchema>;
 
 export const languagePolicies = {
   ja: {
@@ -99,9 +112,16 @@ export type ProjectState = z.infer<typeof ProjectStateSchema>;
 export const WebProjectStateSchema = ProjectStateSchema.pick({
   id: true,
   prompt: true,
+  configuration: true,
   meta: true,
   warnings: true,
 }).extend({
+  workflow: z.object({
+    stage: WorkflowStageSchema,
+    reached: z.array(WorkflowStageSchema),
+    awaitingApproval: z.boolean(),
+    approvedAt: z.iso.datetime().optional(),
+  }),
   agents: z.array(z.object({
     id: z.string(),
     status: z.enum(["pending", "running", "completed", "failed"]),
@@ -124,6 +144,10 @@ export const WebProjectStateSchema = ProjectStateSchema.pick({
   })),
   manuscript: z.string().nullable(),
   bible: z.object({
+    parts: z.array(PartSchema),
+    chapters: z.array(ChapterSchema),
+    styleGuide: StyleGuideSchema.nullable(),
+    foreshadowingTracker: z.array(ForeshadowingTrackerItemSchema),
     editorReport: EditorOutputSchema.nullable(),
     continuityReport: ContinuityOutputSchema.nullable(),
     publisherPackage: PublisherOutputSchema.nullable(),
@@ -144,6 +168,7 @@ export const ErrorCodeSchema = z.enum([
   "validation-error",
   "project-not-found",
   "run-conflict",
+  "invalid-transition",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 

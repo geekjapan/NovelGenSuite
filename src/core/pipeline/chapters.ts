@@ -2,7 +2,11 @@ import type { PipelineProjectState } from "./project-state.js";
 
 export type ChapterOperation =
   | { type: "resume" }
-  | { type: "retry" | "regenerate"; chapterNumber: number };
+  | {
+      type: "retry" | "regenerate" | "expand" | "revise";
+      chapterNumber: number;
+      instruction?: string;
+    };
 
 export function measuredLength(draft: string, unit: "characters" | "words"): number {
   return unit === "characters"
@@ -41,6 +45,9 @@ export function selectChapterNumbers(
   const chapter = ordered.find(({ number }) => number === operation.chapterNumber);
   const run = state.chapterRuns.find(({ chapterNumber }) => chapterNumber === operation.chapterNumber);
   if (!chapter || !run) return [];
+  if (operation.type === "expand" || operation.type === "revise") {
+    return chapter.draft ? [chapter.number] : [];
+  }
   if (operation.type === "regenerate") return [chapter.number];
   return run.status === "failed"
     || run.needsExpansion

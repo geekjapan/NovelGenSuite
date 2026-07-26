@@ -7,7 +7,8 @@ export type GenerateRequest = {
   context: AgentContext;
   chapterCount: number;
   chapterNumber?: number;
-  operation?: "generate" | "retry" | "regenerate" | "auto-expand";
+  operation?: "generate" | "retry" | "regenerate" | "expand" | "revise" | "plan-revise" | "auto-expand";
+  instruction?: string;
   compact: boolean;
   signal?: AbortSignal;
 };
@@ -52,11 +53,27 @@ function projectedDraft(number: number, count: number) {
   };
 }
 
-export const generateMock: Generate = async ({ agentId, chapterCount, chapterNumber }) => {
-  const output = agentId === "chapter-outline"
-    ? projectedOutline(chapterCount)
-    : agentId === "drafting"
-      ? projectedDraft(chapterNumber!, chapterCount)
-      : canonicalOutputs[agentId];
+export const generateMock: Generate = async ({ agentId, chapterCount, chapterNumber, operation }) => {
+  let output: unknown;
+  if (operation === "plan-revise") {
+    output = { patch: {}, explanation: "変更なし", structureChanged: false };
+  } else if (operation === "expand") {
+    output = {
+      draft: projectedDraft(chapterNumber!, chapterCount).draft,
+      expansionSummary: "場面描写を追加",
+    };
+  } else if (operation === "revise") {
+    output = {
+      chapterNumber,
+      draft: projectedDraft(chapterNumber!, chapterCount).draft,
+      chapterSummary: projectedDraft(chapterNumber!, chapterCount).chapterSummary,
+    };
+  } else if (agentId === "chapter-outline") {
+    output = projectedOutline(chapterCount);
+  } else if (agentId === "drafting") {
+    output = projectedDraft(chapterNumber!, chapterCount);
+  } else {
+    output = canonicalOutputs[agentId];
+  }
   return JSON.stringify(output);
 };

@@ -1,9 +1,12 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { renderArtifacts } from "../core/pipeline/artifacts.js";
+import { approvalOutline, renderArtifacts } from "../core/pipeline/artifacts.js";
 import type { PipelineRuntime } from "../core/pipeline/execute.js";
-import { PipelineProjectStateSchema } from "../core/pipeline/project-state.js";
+import {
+  PipelineProjectStateSchema,
+  type PipelineProjectState,
+} from "../core/pipeline/project-state.js";
 import {
   listProjects,
   readProjectState,
@@ -17,7 +20,29 @@ export function createPipelineRuntime(root: string): PipelineRuntime {
       await Promise.all(Object.entries(renderArtifacts(state)).map(([name, contents]) =>
         writeFile(join(root, state.id, name), contents, "utf8")));
     },
+    writeApprovalArtifact: (state) =>
+      writeFile(
+        join(root, state.id, "chapter-outline.json"),
+        `${JSON.stringify(approvalOutline(state), null, 2)}\n`,
+        "utf8",
+      ),
   };
+}
+
+export async function readApprovalArtifact(root: string, id: string): Promise<unknown> {
+  return JSON.parse(await readFile(join(root, id, "chapter-outline.json"), "utf8"));
+}
+
+export async function writeApprovalArtifact(
+  root: string,
+  state: PipelineProjectState,
+  outline: unknown,
+): Promise<void> {
+  await writeFile(
+    join(root, state.id, "chapter-outline.json"),
+    `${JSON.stringify(outline, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 export async function reconcileOrphanedRuns(root: string): Promise<void> {
@@ -44,6 +69,8 @@ export async function reconcileOrphanedRuns(root: string): Promise<void> {
           ? {
               ...agent,
               status: "pending" as const,
+              startedAt: undefined,
+              completedAt: undefined,
               error: undefined,
               attempts: [...(agent.attempts ?? []), attempt],
             }

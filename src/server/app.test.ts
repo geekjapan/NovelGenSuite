@@ -5,13 +5,18 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { generateMock, type Generate } from "../core/pipeline/mock-llm.js";
+import type { PipelineProjectState } from "../core/pipeline/project-state.js";
 import { readProjectState, writeProjectState } from "../core/store/state-json.js";
 import { LlmError } from "../core/llm/openai-client.js";
 import { createApp } from "./app.js";
 
 const project = async (
   app: ReturnType<typeof createApp>,
-  configuration?: { chapterCount: number; chapterLength?: number },
+  configuration?: {
+    chapterCount?: number;
+    chapterLength?: number;
+    requireApproval?: boolean;
+  },
 ) => {
   const response = await app.request("/projects", {
     method: "POST",
@@ -175,12 +180,17 @@ test("abort returns running agent and generating chapter to pending with typed a
   const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
   let draftingStarted!: () => void;
   const started = new Promise<void>((resolve) => { draftingStarted = resolve; });
+  let cancelled = false;
   const generate: Generate = async (request) => {
     if (request.agentId !== "drafting") return generateMock(request);
+    if (cancelled) return generateMock(request);
     draftingStarted();
     await new Promise<void>((_resolve, reject) => {
       request.signal?.addEventListener("abort", () =>
-        reject(new DOMException("aborted", "AbortError")), { once: true });
+        {
+          cancelled = true;
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
     });
     throw new Error("unreachable");
   };
@@ -199,6 +209,288 @@ test("abort returns running agent and generating chapter to pending with typed a
   assert.equal(drafting?.attempts?.at(-1)?.type, "cancellation");
   assert.equal(persisted?.chapterRuns[0]?.status, "pending");
   assert.equal(persisted?.chapterRuns[0]?.attempts?.at(-1)?.type, "cancellation");
+
+  const resumed = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+  })).json();
+  assert.ok(resumed.agents.every(
+    ({ status }: PipelineProjectState["agents"][number]) => status === "completed",
+  ));
+});
+
+test("approval gate stops cleanly, writes an editable outline, and resumes after approval", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const app = createApp({ projectsRoot: root });
+  const created = await project(app, {
+    chapterCount: 2,
+    chapterLength: 100,
+    requireApproval: true,
+  });
+
+  const waiting = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+  })).json();
+  assert.equal(waiting.workflow.stage, "approval");
+  assert.equal(waiting.workflow.awaitingApproval, true);
+  assert.deepEqual(
+    waiting.agents.map(
+      ({ status }: PipelineProjectState["agents"][number]) => status,
+    ),
+    [...Array(5).fill("completed"), ...Array(4).fill("pending")],
+  );
+  const stillWaiting = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+  })).json();
+  assert.equal(stillWaiting.workflow.awaitingApproval, true);
+  assert.ok(stillWaiting.agents.slice(5).every(
+    ({ status }: PipelineProjectState["agents"][number]) => status === "pending",
+  ));
+  const outline = JSON.parse(
+    await readFile(join(root, created.id, "chapter-outline.json"), "utf8"),
+  );
+  outline.parts[0].chapters[0].title = "ユーザーが編集した題名";
+  outline.parts[0].chapters[0].lengthPlan = {
+    target: 120,
+    unit: "characters",
+    min: 100,
+    max: 140,
+  };
+  const saved = await app.request(`/projects/${created.id}/outline`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(outline),
+  });
+  assert.equal(saved.status, 200);
+  const approved = await (await app.request(`/projects/${created.id}/approve`, {
+    method: "POST",
+  })).json();
+  assert.equal(approved.workflow.stage, "drafting");
+  assert.equal(approved.workflow.awaitingApproval, false);
+  assert.equal(approved.bible.chapters[0].title, "ユーザーが編集した題名");
+  assert.equal(approved.bible.chapters[0].lengthPlan.target, 120);
+
+  const completed = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+  })).json();
+  assert.equal(completed.workflow.stage, "final");
+  assert.ok(completed.agents.every(
+    ({ status }: PipelineProjectState["agents"][number]) => status === "completed",
+  ));
+  assert.equal((await app.request(`/projects/${created.id}/approve`, {
+    method: "POST",
+  })).status, 409);
+  await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "planning", confirmed: true }),
+  });
+  const revisedPlan = await (await app.request(`/projects/${created.id}/plan/revise`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ instruction: "緊張感を高める" }),
+  })).json();
+  assert.equal(revisedPlan.workflow.stage, "approval");
+  assert.equal(revisedPlan.workflow.awaitingApproval, true);
+});
+
+test("stage navigation requires confirmation for backtracking and rejects unreached jumps", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const app = createApp({ projectsRoot: root });
+  const created = await project(app, {
+    chapterCount: 1,
+    chapterLength: 100,
+    requireApproval: true,
+  });
+
+  const jump = await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "final" }),
+  });
+  assert.equal(jump.status, 409);
+  assert.equal((await jump.json()).error.code, "invalid-transition");
+
+  await app.request(`/projects/${created.id}/run`, { method: "POST" });
+  const unconfirmed = await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "planning" }),
+  });
+  assert.equal(unconfirmed.status, 409);
+
+  const confirmed = await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "planning", confirmed: true }),
+  });
+  assert.equal(confirmed.status, 200);
+  const moved = await confirmed.json();
+  assert.equal(moved.workflow.stage, "planning");
+  assert.notEqual(moved.meta.updatedAt, created.meta.updatedAt);
+});
+
+test("reapproval preserves only completed and edited chapters", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const app = createApp({ projectsRoot: root });
+  const created = await project(app, {
+    chapterCount: 4,
+    chapterLength: 100,
+    requireApproval: true,
+  });
+  await app.request(`/projects/${created.id}/run`, { method: "POST" });
+  const state = (await readProjectState(root, created.id))!;
+  for (const [index, status] of ([
+    "completed",
+    "edited",
+    "failed",
+    "generating",
+  ] as const).entries()) {
+    state.chapterRuns[index] = {
+      ...state.chapterRuns[index]!,
+      status,
+    };
+    state.bible.chapters[index]!.draft = `本文${index + 1}`;
+    state.bible.parts[0]!.chapters[index]!.draft = `本文${index + 1}`;
+  }
+  await writeProjectState(root, state);
+  const outline = JSON.parse(
+    await readFile(join(root, created.id, "chapter-outline.json"), "utf8"),
+  );
+  outline.parts[0].chapters[2].id = "client-controlled";
+  outline.parts[0].chapters[2].role = "Resolution";
+  outline.parts[0].chapters[2].draft = "注入された本文";
+  await writeFile(
+    join(root, created.id, "chapter-outline.json"),
+    JSON.stringify(outline),
+    "utf8",
+  );
+
+  const approved = await (await app.request(`/projects/${created.id}/approve`, {
+    method: "POST",
+  })).json();
+  assert.deepEqual(
+    approved.chapterRuns.map(
+      ({ status }: PipelineProjectState["chapterRuns"][number]) => status,
+    ),
+    ["completed", "edited", "pending", "pending"],
+  );
+  assert.deepEqual(
+    approved.bible.chapters.map(
+      ({ draft }: PipelineProjectState["bible"]["chapters"][number]) => draft ?? null,
+    ),
+    ["本文1", "本文2", null, null],
+  );
+  assert.equal(approved.bible.chapters[2].id, "chapter-3");
+  assert.equal(approved.bible.chapters[2].role, "Development");
+});
+
+test("expand, chapter revise, and plan revise accept their typed output contracts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const app = createApp({ projectsRoot: root });
+  const created = await project(app, { chapterCount: 1, chapterLength: 100 });
+  await app.request(`/projects/${created.id}/run`, { method: "POST" });
+
+  const expanded = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+    body: JSON.stringify({ operation: "expand", chapterNumber: 1 }),
+  })).json();
+  assert.ok(expanded.completedOutputs.drafting.at(-1).expansionSummary);
+
+  const revised = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+    body: JSON.stringify({ operation: "revise", chapterNumber: 1 }),
+  })).json();
+  assert.equal(revised.chapterRuns[0].status, "completed");
+
+  await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "planning", confirmed: true }),
+  });
+  const plan = await (await app.request(`/projects/${created.id}/plan/revise`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ instruction: "中盤の緊張感を高める" }),
+  })).json();
+  assert.equal(plan.workflow.stage, "drafting");
+  assert.equal(plan.completedOutputs["plan-revise"].at(-1).structureChanged, false);
+});
+
+test("aborting plan revision records typed cancellation and returns its agent to pending", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  let revisionStarted!: () => void;
+  const started = new Promise<void>((resolve) => { revisionStarted = resolve; });
+  const generate: Generate = async (request) => {
+    if (request.operation !== "plan-revise") return generateMock(request);
+    revisionStarted();
+    await new Promise<void>((_resolve, reject) => {
+      request.signal?.addEventListener("abort", () =>
+        reject(new DOMException("aborted", "AbortError")), { once: true });
+    });
+    throw new Error("unreachable");
+  };
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app, { chapterCount: 1, chapterLength: 100 });
+  await app.request(`/projects/${created.id}/run`, { method: "POST" });
+  await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "planning", confirmed: true }),
+  });
+
+  const revising = app.request(`/projects/${created.id}/plan/revise`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ instruction: "緊張感を高める" }),
+  });
+  await started;
+  assert.equal((await app.request(`/projects/${created.id}/abort`, {
+    method: "POST",
+  })).status, 202);
+  const cancelled = await (await revising).json();
+  const outline = cancelled.agents.find(
+    ({ id }: PipelineProjectState["agents"][number]) => id === "chapter-outline",
+  );
+  assert.equal(outline.status, "pending");
+  assert.equal(outline.attempts.at(-1).operation, "plan-revise");
+});
+
+test("malformed auxiliary output is recorded instead of replaced by a generic fallback", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const generate: Generate = async (request) =>
+    request.operation === "expand" || request.operation === "plan-revise"
+      ? "broken"
+      : generateMock(request);
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app, { chapterCount: 1, chapterLength: 100 });
+  const completed = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+  })).json();
+  const originalDraft = completed.bible.chapters[0].draft;
+
+  const expansion = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+    body: JSON.stringify({ operation: "expand", chapterNumber: 1 }),
+  })).json();
+  assert.equal(expansion.chapterRuns[0].status, "failed");
+  assert.equal(expansion.bible.chapters[0].draft, originalDraft);
+
+  await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "planning", confirmed: true }),
+  });
+  const plan = await (await app.request(`/projects/${created.id}/plan/revise`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ instruction: "緊張感を高める" }),
+  })).json();
+  const outline = plan.agents.find(
+    ({ id }: PipelineProjectState["agents"][number]) => id === "chapter-outline",
+  );
+  assert.equal(outline.status, "failed");
+  assert.ok(outline.attemptCount);
+  assert.ok(outline.lastRetryError);
 });
 
 test("compact retry accepts fenced JSON and duplicate run returns run-conflict", async () => {
@@ -225,6 +517,12 @@ test("compact retry accepts fenced JSON and duplicate run returns run-conflict",
   const conflict = await app.request(`/projects/${created.id}/run`, { method: "POST" });
   assert.equal(conflict.status, 409);
   assert.equal((await conflict.json()).error.code, "run-conflict");
+  const stageConflict = await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "launcher", confirmed: true }),
+  });
+  assert.equal(stageConflict.status, 409);
   release();
   const completed = await running;
   assert.equal(completed.status, 200);
@@ -307,7 +605,6 @@ test("HTTP API returns stable input and not-found error codes", async () => {
   const app = createApp({ projectsRoot: root });
   const cases = [
     [{ prompt: "story", language: "fr" }, "unsupported-language"],
-    [{ prompt: "物語", configuration: { requireApproval: true } }, "unsupported-setting"],
     [{ prompt: "物語", configuration: { chapterCount: 0 } }, "validation-error"],
   ] as const;
   for (const [body, code] of cases) {

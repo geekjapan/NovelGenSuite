@@ -1,4 +1,5 @@
 import type { PipelineProjectState } from "./project-state.js";
+import type { ChapterOutlineOutput } from "../../shared/agent-schemas.js";
 
 const bullets = (values: string[]) => values.map((value) => `- ${value}`).join("\n") || "- なし";
 
@@ -8,6 +9,23 @@ export function rebuildManuscript(state: PipelineProjectState): string {
     .sort((left, right) => left.number - right.number)
     .map(({ title, draft }) => `# ${title}\n\n${draft}`)
     .join("\n\n");
+}
+
+export function approvalOutline(state: PipelineProjectState): ChapterOutlineOutput {
+  return {
+    parts: state.bible.parts.map((part) => ({
+      ...part,
+      chapters: part.chapters.map(({
+        draft: _draft,
+        chapterSummary: _chapterSummary,
+        continuityNotes: _continuityNotes,
+        needsRevision: _needsRevision,
+        ...chapter
+      }) => chapter),
+    })),
+    styleGuide: state.bible.styleGuide!,
+    foreshadowingTracker: state.bible.foreshadowingTracker,
+  };
 }
 
 export function renderArtifacts(state: PipelineProjectState): Record<string, string> {

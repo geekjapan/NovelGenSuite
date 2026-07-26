@@ -14,20 +14,39 @@ test("web response schemas validate and project persisted state", () => {
     prompt: "月面都市の最後の書店",
     language: "ja",
     configuration: {},
+    workflow: {
+      stage: "planning",
+      reached: ["launcher", "planning"],
+      awaitingApproval: false,
+    },
     meta: { schemaVersion: 1, createdAt, updatedAt: createdAt },
     agents: [{ id: "concept", status: "completed", completedOutputs: "ignored" }],
     chapterRuns: [{ chapterNumber: 1, status: "completed" }],
     manuscript: null,
     bible: {
+      parts: [],
+      chapters: [],
+      styleGuide: null,
+      foreshadowingTracker: [],
       editorReport: null,
       continuityReport: null,
       publisherPackage: null,
-      chapters: [],
     },
     completedOutputs: {},
   });
 
-  assert.deepEqual(Object.keys(project), ["id", "prompt", "meta", "warnings", "agents", "chapterRuns", "manuscript", "bible"]);
+  assert.deepEqual(Object.keys(project), [
+    "id",
+    "prompt",
+    "configuration",
+    "meta",
+    "warnings",
+    "workflow",
+    "agents",
+    "chapterRuns",
+    "manuscript",
+    "bible",
+  ]);
   assert.deepEqual(project.warnings, []);
   assert.deepEqual(project.agents, [{ id: "concept", status: "completed" }]);
   assert.deepEqual(project.chapterRuns, [{ status: "completed" }]);

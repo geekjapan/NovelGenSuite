@@ -47,16 +47,30 @@ const draftingLengthGuidance = (request: GenerateRequest) => {
     : "";
 };
 
+const operationInstruction = (request: GenerateRequest) => {
+  if (request.operation === "expand") {
+    return "章を拡張する。現在長と目標長を確認し、前提を変えず要約せず、場面・会話・感覚描写・内的葛藤・転換を追加して連続性を維持する。draft, expansionSummary だけを返す。";
+  }
+  if (request.operation === "revise") {
+    return "対象章を改稿する。chapterNumber, draft, chapterSummary だけを返す。";
+  }
+  if (request.operation === "plan-revise") {
+    return "計画を改稿する。変更キーだけの patch, explanation, structureChanged を返す。構造変更が必要な場合以外は patch に parts を含めない。";
+  }
+  return instructions[request.agentId];
+};
+
 export function buildPrompt(request: GenerateRequest) {
   return {
     system: system(request),
     user: [
       `ROLE=${request.agentId}`,
       request.compact ? "COMPACT RETRY: 最小限の短いJSONで契約を満たす。" : "",
-      instructions[request.agentId],
+      operationInstruction(request),
       request.operation === "auto-expand"
         ? "AUTO EXPAND: CONTEXT.currentDraft を保持して不足する描写を加え、章全体を返す。"
         : "",
+      request.instruction ? `USER INSTRUCTION=${request.instruction}` : "",
       draftingLengthGuidance(request),
       request.agentId === "chapter-outline"
         ? `SKELETON=${JSON.stringify(request.context.chapterSkeleton)}`

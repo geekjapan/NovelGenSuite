@@ -151,6 +151,27 @@ export const DraftingOutputSchema = z.object({
   continuityNotes: list(text(280), 8),
 });
 
+export const ExpansionOutputSchema = z.object({
+  draft: text(50_000),
+  expansionSummary: text(500),
+});
+
+export const ChapterRevisionOutputSchema = z.object({
+  chapterNumber: z.number().int().positive(),
+  draft: text(50_000),
+  chapterSummary: text(500),
+});
+
+export const PlanRevisionOutputSchema = z.object({
+  patch: z.object({
+    parts: z.array(ChapterOutlinePartSchema).min(1).max(16).optional(),
+    styleGuide: StyleGuideSchema.optional(),
+    foreshadowingTracker: z.array(ForeshadowingTrackerItemSchema).max(3).optional(),
+  }),
+  explanation: text(500),
+  structureChanged: z.boolean(),
+});
+
 export const EditorOutputSchema = z.object({
   strengths: list(shortText, 12),
   weakPoints: list(shortText, 12),
@@ -191,6 +212,7 @@ export type WorldbuildingOutput = z.infer<typeof WorldbuildingOutputSchema>;
 export type PlotOutput = z.infer<typeof PlotOutputSchema>;
 export type ChapterOutlineOutput = z.infer<typeof ChapterOutlineOutputSchema>;
 export type DraftingOutput = z.infer<typeof DraftingOutputSchema>;
+export type PlanRevisionOutput = z.infer<typeof PlanRevisionOutputSchema>;
 export type EditorOutput = z.infer<typeof EditorOutputSchema>;
 export type ContinuityOutput = z.infer<typeof ContinuityOutputSchema>;
 export type PublisherOutput = z.infer<typeof PublisherOutputSchema>;

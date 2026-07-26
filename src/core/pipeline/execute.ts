@@ -1,4 +1,10 @@
 import {
+  ChapterRevisionOutputSchema,
+  ExpansionOutputSchema,
+  PlanRevisionOutputSchema,
+  type PlanRevisionOutput,
+} from "../../shared/agent-schemas.js";
+import {
   agentDefinitions,
   mergeAgentOutput,
   normalizeAgentOutput,
@@ -6,7 +12,7 @@ import {
 } from "../registry/agent-registry.js";
 import { createGenerateFromEnv, LlmError, sanitizeErrorMessage } from "../llm/openai-client.js";
 import { buildPrompt } from "../prompts/prompts.js";
-import { rebuildManuscript } from "./artifacts.js";
+import { approvalOutline, rebuildManuscript } from "./artifacts.js";
 import {
   classifyLength,
   hasChapterCoverage,
@@ -15,7 +21,12 @@ import {
 } from "./chapters.js";
 import { extractJson } from "./json-output.js";
 import type { Generate } from "./mock-llm.js";
-import { PipelineProjectStateSchema, type PipelineProjectState } from "./project-state.js";
+import {
+  approveChapterOutline,
+  PipelineProjectStateSchema,
+  setWorkflowStage,
+  type PipelineProjectState,
+} from "./project-state.js";
 import {
   actionableError,
   classifyRecovery,
@@ -32,6 +43,7 @@ export class RunConflictError extends Error {}
 export type PipelineRuntime = {
   save: (state: PipelineProjectState) => Promise<void>;
   writeArtifacts: (state: PipelineProjectState) => Promise<void>;
+  writeApprovalArtifact?: (state: PipelineProjectState) => Promise<void>;
 };
 
 export type ExecuteOptions = {
@@ -70,7 +82,7 @@ const wasCancelled = (signal?: AbortSignal) =>
 const chapterExecutionError = (
   cause: unknown,
   chapterNumber: number,
-  operation: "generate" | "retry" | "regenerate" | "auto-expand",
+  operation: "generate" | "retry" | "regenerate" | "expand" | "revise" | "auto-expand",
 ) => cause instanceof LlmError && cause.kind === "timeout"
   ? `第${chapterNumber}章の${operation === "auto-expand" ? "自動拡張" : "生成"}がタイムアウトしました。章長を減らすか、モデルを変更してください。`
   : operation === "auto-expand" ? `${EXPANSION_ERROR}: ${actionableError(cause)}` : actionableError(cause);
@@ -253,7 +265,8 @@ async function invoke(
   generate: Generate,
   options: {
     chapterNumber?: number;
-    operation?: "generate" | "retry" | "regenerate" | "auto-expand";
+    operation?: "generate" | "retry" | "regenerate" | "expand" | "revise" | "plan-revise" | "auto-expand";
+    instruction?: string;
     currentDraft?: string;
     signal?: AbortSignal;
     alternateGenerate?: Generate;
@@ -293,6 +306,7 @@ async function invoke(
         chapterCount: state.configuration.chapterCount,
         chapterNumber: options.chapterNumber,
         operation: options.operation,
+        instruction: options.instruction,
         compact,
         signal: options.signal,
       };
@@ -337,7 +351,30 @@ async function invoke(
       });
       failedStage = "normalize";
       stageStarted = performance.now();
-      const output = normalizeAgentOutput(id, extracted);
+      const chapter = options.chapterNumber
+        ? state.bible.chapters.find(({ number }) => number === options.chapterNumber)
+        : undefined;
+      let output: unknown;
+      if (options.operation === "expand") {
+        const expanded = ExpansionOutputSchema.parse(extracted);
+        output = {
+          chapterNumber: options.chapterNumber,
+          draft: expanded.draft,
+          chapterSummary: chapter?.chapterSummary ?? expanded.expansionSummary,
+          continuityNotes: chapter?.continuityNotes ?? [],
+          expansionSummary: expanded.expansionSummary,
+        };
+      } else if (options.operation === "revise") {
+        const revised = ChapterRevisionOutputSchema.parse(extracted);
+        output = {
+          ...revised,
+          continuityNotes: chapter?.continuityNotes ?? [],
+        };
+      } else if (options.operation === "plan-revise") {
+        output = PlanRevisionOutputSchema.parse(extracted);
+      } else {
+        output = normalizeAgentOutput(id, extracted);
+      }
       options.log("pipeline.stage", {
         agentId: id,
         chapterNumber: options.chapterNumber,
@@ -393,7 +430,9 @@ async function invoke(
           throw combinedFailure;
         }
         if (
-          (id === "chapter-outline" && classifyRecovery(rootCause) === "retry")
+          (id === "chapter-outline"
+            && options.operation !== "plan-revise"
+            && classifyRecovery(rootCause) === "retry")
           || isOutputQualityFailure(rootCause)
         ) {
           const fallback = normalizeAgentOutput(id, localFallback(id, context, options.chapterNumber));
@@ -427,7 +466,14 @@ async function invoke(
       lastRetryError = sanitizeErrorMessage(rootCause);
       logParseFailure(options.log, raw, provider, rootCause instanceof RangeError ? rootCause.message : "invalid-output", options.localDebug);
       if (!compact && !(rootCause instanceof RangeError) && options.operation !== "auto-expand") continue;
-      if (options.operation === "auto-expand") throw combinedFailure;
+      if (
+        options.operation === "auto-expand"
+        || options.operation === "expand"
+        || options.operation === "revise"
+        || options.operation === "plan-revise"
+      ) {
+        throw combinedFailure;
+      }
       const fallback = normalizeAgentOutput(id, localFallback(id, context, options.chapterNumber));
       return {
         output: fallback,
@@ -480,6 +526,10 @@ async function runDrafting(
       const result = await invoke(state, "drafting", generate, {
         chapterNumber,
         operation: operation.type === "resume" ? "generate" : operation.type,
+        instruction: operation.type === "resume" ? undefined : operation.instruction,
+        currentDraft: operation.type === "expand" || operation.type === "revise"
+          ? state.bible.chapters.find(({ number }) => number === chapterNumber)?.draft
+          : undefined,
         signal,
         ...recoveryOptions,
       });
@@ -523,7 +573,11 @@ async function runDrafting(
     const chapter = state.bible.chapters.find(({ number }) => number === chapterNumber)!;
     let status = classifyLength(chapter.lengthPlan, chapter.draft!);
 
-    if (status === "too-short") {
+    if (
+      status === "too-short"
+      && operation.type !== "expand"
+      && operation.type !== "revise"
+    ) {
       state = await save(runtime, setChapter(state, chapterNumber, {
         status: "generating",
         lengthStatus: status,
@@ -603,7 +657,7 @@ async function runDrafting(
       state = setChapter(state, chapterNumber, {
         status: "completed",
         lengthStatus: status,
-        needsExpansion: false,
+        needsExpansion: status === "too-short" || status === "under",
         error: undefined,
       });
     }
@@ -619,7 +673,7 @@ async function runDrafting(
 function cancelRunning(
   state: PipelineProjectState,
   id: AgentId,
-  operation: ChapterOperation,
+  operation: ChapterOperation | { type: "plan-revise" },
 ): PipelineProjectState {
   const generating = state.chapterRuns.find(({ status }) => status === "generating");
   const wasExpanding = generating?.lengthStatus === "too-short"
@@ -631,6 +685,8 @@ function cancelRunning(
   };
   let next = setAgent(state, id, {
     status: "pending",
+    startedAt: undefined,
+    completedAt: undefined,
     error: undefined,
     attempts: [...(state.agents.find((agent) => agent.id === id)?.attempts ?? []), attempt],
   });
@@ -661,13 +717,26 @@ export async function executePipeline(
   if (initial.agents.some(({ status }) => status === "running")) {
     throw new RunConflictError("run-conflict");
   }
+  if (initial.workflow.awaitingApproval) {
+    return initial;
+  }
 
   let state = initial;
+  if (state.workflow.stage === "launcher") {
+    state = setWorkflowStage(state, "planning");
+  }
   let resolvedGenerate = generate;
   const log = options.log ?? defaultLog;
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   const localDebug = options.localDebug ?? process.env.NOVELGEN_LOCAL_DEBUG === "1";
   for (const definition of agentDefinitions) {
+    if (
+      definition.id === "editor"
+      && state.workflow.stage === "drafting"
+      && hasChapterCoverage(state)
+    ) {
+      state = await save(runtime, setWorkflowStage(state, "final"));
+    }
     const agent = state.agents.find(({ id }) => id === definition.id)!;
     const explicitDraftOperation = definition.id === "drafting" && operation.type !== "resume";
     if (agent.status === "completed" && !explicitDraftOperation) continue;
@@ -678,6 +747,9 @@ export async function executePipeline(
       error: undefined,
     });
     state = await save(runtime, state);
+    if (definition.id === "drafting" && state.workflow.stage !== "drafting") {
+      state = await save(runtime, setWorkflowStage(state, "drafting"));
+    }
     try {
       options.signal?.throwIfAborted();
       const agentSignal = AbortSignal.any([
@@ -743,6 +815,22 @@ export async function executePipeline(
         error: undefined,
       });
       state = await save(runtime, state);
+      if (definition.id === "chapter-outline") {
+        if (state.configuration.requireApproval && !state.workflow.approvedAt) {
+          state = await save(runtime, {
+            ...setWorkflowStage(state, "approval"),
+            workflow: {
+              ...setWorkflowStage(state, "approval").workflow,
+              awaitingApproval: true,
+            },
+          });
+          await runtime.writeApprovalArtifact?.(state);
+          return state;
+        }
+        state = await save(runtime, setWorkflowStage(state, "drafting"));
+      } else if (definition.id === "drafting") {
+        state = await save(runtime, setWorkflowStage(state, "final"));
+      }
     } catch (cause) {
       const rootCause = underlyingCause(cause);
       if (cause instanceof PipelineStepError) state = cause.state;
@@ -777,4 +865,105 @@ export async function executePipeline(
   }
   await runtime.writeArtifacts(state);
   return state;
+}
+
+export async function revisePlan(
+  initial: PipelineProjectState,
+  runtime: PipelineRuntime,
+  instruction: string,
+  generate?: Generate,
+  signal?: AbortSignal,
+): Promise<PipelineProjectState> {
+  let working = await save(runtime, setAgent(initial, "chapter-outline", {
+    status: "running",
+    startedAt: new Date().toISOString(),
+    completedAt: undefined,
+    error: undefined,
+  }));
+  let result: InvokeResult;
+  try {
+    result = await invoke(
+      working,
+      "chapter-outline",
+      generate ?? createGenerateFromEnv(),
+      {
+        operation: "plan-revise",
+        instruction,
+        signal,
+        log: defaultLog,
+        localDebug: process.env.NOVELGEN_LOCAL_DEBUG === "1",
+        retryDelayMs: DEFAULT_RETRY_DELAY_MS,
+        callTimeoutMs: DEFAULT_CALL_TIMEOUT_MS,
+        parseTimeoutMs: DEFAULT_PARSE_TIMEOUT_MS,
+      },
+    );
+  } catch (cause) {
+    if (wasCancelled(signal) || classifyRecovery(underlyingCause(cause)) === "abort") {
+      return save(runtime, cancelRunning(working, "chapter-outline", { type: "plan-revise" }));
+    }
+    working = await save(runtime, setAgent(working, "chapter-outline", {
+      status: "failed",
+      completedAt: undefined,
+      error: actionableError(underlyingCause(cause)),
+      attemptCount: attemptedCount(cause, MAX_CLIENT_ATTEMPTS),
+      maxAttempts: MAX_CLIENT_ATTEMPTS * 2,
+      lastRetryError: sanitizeErrorMessage(underlyingCause(cause)),
+    }));
+    return working;
+  }
+  working = setAgent(working, "chapter-outline", {
+    ...result.recovery,
+    status: "completed",
+    completedAt: new Date().toISOString(),
+    error: undefined,
+  });
+  const revision = result.output as PlanRevisionOutput;
+  const current = approvalOutline(working);
+  const protectedBible = mergeAgentOutput(working.bible, "chapter-outline", {
+    ...current,
+    ...revision.patch,
+  });
+  let next = approveChapterOutline(working, approvalOutline({
+    ...working,
+    bible: protectedBible,
+  }));
+  if (revision.structureChanged) {
+    const mark = <T extends { needsRevision?: boolean }>(chapter: T): T => ({
+      ...chapter,
+      needsRevision: true,
+    });
+    next = {
+      ...next,
+      bible: {
+        ...next.bible,
+        parts: next.bible.parts.map((part) => ({
+          ...part,
+          chapters: part.chapters.map(mark),
+        })),
+        chapters: next.bible.chapters.map(mark),
+      },
+    };
+  }
+  next = {
+    ...next,
+    completedOutputs: {
+      ...next.completedOutputs,
+      "plan-revise": [
+        ...((next.completedOutputs["plan-revise"] as PlanRevisionOutput[] | undefined) ?? []),
+        revision,
+      ],
+    },
+  };
+  if (working.configuration.requireApproval) {
+    next = {
+      ...setWorkflowStage(next, "approval"),
+      workflow: {
+        ...setWorkflowStage(next, "approval").workflow,
+        awaitingApproval: true,
+        approvedAt: undefined,
+      },
+    };
+  }
+  await runtime.writeApprovalArtifact?.(next);
+  return save(runtime, next);
 }

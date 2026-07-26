@@ -1,6 +1,9 @@
 import { FormEvent, useEffect, useState } from "react";
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 
+import {
+  ChapterOutlineOutputSchema,
+} from "../shared/agent-schemas.js";
 import {
   ErrorEnvelopeSchema,
   ProjectListResponseSchema,
@@ -76,6 +79,24 @@ async function runProject(id: string) {
   return api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/run`, { method: "POST" });
 }
 
+async function runChapter(
+  id: string,
+  operation: "expand" | "revise",
+  chapterNumber: number,
+) {
+  return api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      operation,
+      chapterNumber,
+      instruction: operation === "expand"
+        ? "場面、会話、感覚描写、内的葛藤を加えて章を拡張する"
+        : "前提と連続性を守り、読みやすく章を改稿する",
+    }),
+  });
+}
+
 function ProjectList({ onRunFailure }: { onRunFailure: (id: string) => void }) {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [error, setError] = useState<Error | null>(null);
@@ -90,7 +111,9 @@ function ProjectList({ onRunFailure }: { onRunFailure: (id: string) => void }) {
     setStarting(true);
     setError(null);
     const data = new FormData(event.currentTarget);
-    const configuration: Record<string, number> = {};
+    const configuration: Record<string, number | boolean> = {
+      requireApproval: data.get("requireApproval") === "on",
+    };
     const chapterCount = data.get("chapterCount");
     const chapterLength = data.get("chapterLength");
     if (chapterCount) configuration.chapterCount = Number(chapterCount);
@@ -136,6 +159,7 @@ function ProjectList({ onRunFailure }: { onRunFailure: (id: string) => void }) {
             <input name="chapterLength" type="number" min="1" placeholder="2000" />
           </label>
         </div>
+        <label className="check"><input name="requireApproval" type="checkbox" /> 章構成を確認してから執筆する</label>
         <ErrorNotice error={error} />
         <button className="primary" disabled={starting}>{starting ? "開始しています…" : "生成を開始"}<span aria-hidden="true">→</span></button>
       </form>
@@ -160,6 +184,7 @@ function ProjectView({ id, runFailed, onRunStarted }: { id: string; runFailed: b
   const [project, setProject] = useState<Project | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [resuming, setResuming] = useState(false);
+  const [acting, setActing] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -193,6 +218,132 @@ function ProjectView({ id, runFailed, onRunStarted }: { id: string; runFailed: b
     }
   }
 
+  async function moveStage(stage: Project["workflow"]["stage"]) {
+    if (!project || project.workflow.stage === stage) return;
+    const current = project.workflow.stage;
+    const order = ["launcher", "planning", "approval", "drafting", "final"];
+    const confirmed = order.indexOf(stage) >= order.indexOf(current)
+      || confirm("前の段階へ戻りますか？");
+    if (!confirmed) return;
+    try {
+      setProject(await api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/stage`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ stage, confirmed }),
+      }));
+    } catch (cause) {
+      setError(cause as Error);
+    }
+  }
+
+  async function approve(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!project) return;
+    setActing(true);
+    setError(null);
+    const data = new FormData(event.currentTarget);
+    const outline = {
+      parts: project.bible.parts.map((part) => ({
+        ...part,
+        chapters: part.chapters.map((chapter) => {
+          const {
+            draft: _draft,
+            chapterSummary: _chapterSummary,
+            continuityNotes: _continuityNotes,
+            needsRevision: _needsRevision,
+            ...editable
+          } = chapter;
+          return {
+            ...editable,
+            title: data.get(`title-${chapter.number}`),
+            lengthPlan: {
+              ...chapter.lengthPlan,
+              target: Number(data.get(`length-${chapter.number}`)),
+              min: Number(data.get(`min-${chapter.number}`)),
+              max: Number(data.get(`max-${chapter.number}`)),
+            },
+          };
+        }),
+      })),
+      styleGuide: project.bible.styleGuide,
+      foreshadowingTracker: project.bible.foreshadowingTracker,
+    };
+    try {
+      await api(ChapterOutlineOutputSchema, `/projects/${encodeURIComponent(id)}/outline`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(outline),
+      });
+      await api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/approve`, {
+        method: "POST",
+      });
+      setProject(await runProject(id));
+    } catch (cause) {
+      setError(cause as Error);
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function chapterAction(operation: "expand" | "revise", chapterNumber: number) {
+    setActing(true);
+    setError(null);
+    try {
+      setProject(await runChapter(id, operation, chapterNumber));
+    } catch (cause) {
+      setError(cause as Error);
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function revisePlanAction(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!project) return;
+    if (
+      project.workflow.stage !== "planning"
+      && !confirm("計画段階へ戻って改稿しますか？")
+    ) return;
+    setActing(true);
+    setError(null);
+    const instruction = new FormData(event.currentTarget).get("instruction");
+    try {
+      if (project.workflow.stage !== "planning") {
+        await api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/stage`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ stage: "planning", confirmed: true }),
+        });
+      }
+      const revised = await api(WebProjectStateSchema, `/projects/${encodeURIComponent(id)}/plan/revise`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ instruction }),
+      });
+      const planStatus = revised.agents.find(({ id: agentId }) =>
+        agentId === "chapter-outline")?.status;
+      setProject(
+        revised.workflow.awaitingApproval || planStatus !== "completed"
+          ? revised
+          : await runProject(id),
+      );
+    } catch (cause) {
+      setError(cause as Error);
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function abort() {
+    try {
+      await api(z.object({ aborted: z.literal(true) }), `/projects/${encodeURIComponent(id)}/abort`, {
+        method: "POST",
+      });
+    } catch (cause) {
+      setError(cause as Error);
+    }
+  }
+
   if (error instanceof ApiError && error.code === "project-not-found") return <main className="page narrow">
     <a className="back" href="#/">← 一覧へ戻る</a>
     <section className="panel not-found"><p className="eyebrow">PROJECT NOT FOUND</p><h1>プロジェクトが<br />見つかりません。</h1><ErrorNotice error={error} /></section>
@@ -212,6 +363,47 @@ function ProjectView({ id, runFailed, onRunStarted }: { id: string; runFailed: b
     <ErrorNotice error={error} />
     {project.warnings.map((warning) =>
       <p role="status" key={warning.code}>{warning.message}</p>)}
+
+    <nav className="stages" aria-label="制作段階">
+      {([
+        ["launcher", "開始"],
+        ["planning", "計画"],
+        ["approval", "承認"],
+        ["drafting", "執筆"],
+        ["final", "最終"],
+      ] as const).map(([stage, label]) =>
+        <button
+          className={project.workflow.stage === stage ? "current" : ""}
+          disabled={!project.workflow.reached.includes(stage)}
+          key={stage}
+          onClick={() => void moveStage(stage)}
+        >{label}</button>)}
+    </nav>
+
+    {project.agents.some(({ status }) => status === "running") ?
+      <button className="danger" onClick={() => void abort()}>生成を停止</button> : null}
+
+    {project.workflow.reached.includes("approval")
+      && (project.workflow.stage === "approval" || project.workflow.stage === "planning")
+      ? <section className="panel approval-panel">
+          <p className="eyebrow">CHAPTER OUTLINE APPROVAL</p>
+          <h2>{project.workflow.awaitingApproval ? "章構成を確認" : "計画を改稿"}</h2>
+          <p>題名と章長を編集して承認すると、執筆を続けます。</p>
+          <form onSubmit={approve}>
+            {project.bible.chapters.map((chapter) =>
+              <fieldset key={chapter.number}>
+                <legend>第{chapter.number}章</legend>
+                <label>題名<input name={`title-${chapter.number}`} defaultValue={chapter.title} required /></label>
+                <div className="field-row">
+                  <label>目標<input name={`length-${chapter.number}`} type="number" min="1" defaultValue={chapter.lengthPlan.target} required /></label>
+                  <label>最小<input name={`min-${chapter.number}`} type="number" min="1" defaultValue={chapter.lengthPlan.min} required /></label>
+                  <label>最大<input name={`max-${chapter.number}`} type="number" min="1" defaultValue={chapter.lengthPlan.max} required /></label>
+                </div>
+              </fieldset>)}
+            <button className="primary" disabled={acting}>{acting ? "処理しています…" : "章構成を承認して再開"}<span aria-hidden="true">→</span></button>
+          </form>
+        </section>
+      : null}
 
     {startFailed ? <section className="failure" role="alert">
       <p className="eyebrow">RUN NOT STARTED</p>
@@ -243,6 +435,24 @@ function ProjectView({ id, runFailed, onRunStarted }: { id: string; runFailed: b
         })}
       </ol>
     </section>
+
+    {project.bible.chapters.some((chapter) => chapter.draft) ?
+      <section className="chapter-actions">
+        <div className="section-heading"><p className="section-number">操作</p><h2>章の調整</h2></div>
+        <form className="plan-revise" onSubmit={revisePlanAction}>
+          <label>計画の改稿指示<input name="instruction" required placeholder="中盤の緊張感を高める" /></label>
+          <button disabled={acting}>計画を改稿</button>
+        </form>
+        {project.bible.chapters.filter((chapter) => chapter.draft).map((chapter) =>
+          <article key={chapter.number}>
+            <strong>第{chapter.number}章 {chapter.title}</strong>
+            <div>
+              <button disabled={acting} onClick={() => void chapterAction("expand", chapter.number)}>章を拡張</button>
+              <button disabled={acting} onClick={() => void chapterAction("revise", chapter.number)}>章を改稿</button>
+            </div>
+          </article>)}
+      </section>
+      : null}
 
     {finished && project.manuscript ? <section className="outputs">
       <div className="section-heading"><p className="section-number">成果物</p><h2>完成した小説</h2></div>
