@@ -57,6 +57,10 @@ export function createApp({
   const RunRequestSchema = z.discriminatedUnion("operation", [
     z.object({ operation: z.literal("resume") }),
     z.object({
+      operation: z.literal("rerun-final"),
+      agent: z.enum(["editor", "continuity", "publisher"]),
+    }),
+    z.object({
       operation: z.enum(["retry", "regenerate", "expand", "revise"]),
       chapterNumber: z.number().int().positive(),
       instruction: z.string().trim().max(2_000).optional(),
@@ -247,11 +251,14 @@ export function createApp({
       return context.json(await executePipeline(state, pipelineRuntime, generate, {
         chapterOperation: request.data.operation === "resume"
           ? { type: "resume" }
+          : request.data.operation === "rerun-final"
+            ? { type: "resume" }
           : {
             type: request.data.operation,
             chapterNumber: request.data.chapterNumber,
             instruction: request.data.instruction,
           },
+        finalAgent: request.data.operation === "rerun-final" ? request.data.agent : undefined,
         signal: controller.signal,
         alternateGenerate,
       }));

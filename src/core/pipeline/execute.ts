@@ -48,6 +48,7 @@ export type PipelineRuntime = {
 
 export type ExecuteOptions = {
   chapterOperation?: ChapterOperation;
+  finalAgent?: Extract<AgentId, "editor" | "continuity" | "publisher">;
   signal?: AbortSignal;
   alternateGenerate?: Generate;
   log?: PipelineLog;
@@ -707,7 +708,18 @@ export async function executePipeline(
   options: ExecuteOptions = {},
 ): Promise<PipelineProjectState> {
   const operation = options.chapterOperation ?? { type: "resume" };
+  let state = options.finalAgent
+    ? {
+        ...initial,
+        manuscript: rebuildManuscript(initial),
+        agents: initial.agents.map((agent) => agent.id === options.finalAgent
+          ? { id: agent.id, status: "pending" as const }
+          : agent),
+      }
+    : initial;
   if (
+    !options.finalAgent
+    &&
     operation.type === "resume"
     && initial.agents.every(({ status }) => status === "completed")
   ) {
@@ -721,7 +733,6 @@ export async function executePipeline(
     return initial;
   }
 
-  let state = initial;
   if (state.workflow.stage === "launcher") {
     state = setWorkflowStage(state, "planning");
   }
@@ -730,6 +741,7 @@ export async function executePipeline(
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   const localDebug = options.localDebug ?? process.env.NOVELGEN_LOCAL_DEBUG === "1";
   for (const definition of agentDefinitions) {
+    if (options.finalAgent && definition.id !== options.finalAgent) continue;
     if (
       definition.id === "editor"
       && state.workflow.stage === "drafting"

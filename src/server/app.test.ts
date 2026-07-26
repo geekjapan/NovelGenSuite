@@ -47,15 +47,32 @@ test("mock run completes nine roles and persists manuscript and three Markdown r
   assert.ok(completed.bible.editorReport);
   assert.ok(completed.bible.continuityReport);
   assert.ok(completed.bible.publisherPackage);
+  assert.equal(
+    completed.bible.publisherPackage.promotedTitle,
+    completed.bible.publisherPackage.titleIdeas[0],
+  );
+  const persisted = JSON.parse(await readFile(join(root, created.id, "state.json"), "utf8"));
+  assert.deepEqual(persisted, completed);
+  const noOp = await app.request(`/projects/${created.id}/run`, { method: "POST" });
+  assert.deepEqual(await noOp.json(), completed);
+
+  const drafts = completed.bible.chapters.map(({ draft }: any) => draft);
+  for (const agent of ["editor", "continuity", "publisher"]) {
+    await writeProjectState(root, { ...completed, manuscript: "stale" });
+    const rerun = await app.request(`/projects/${created.id}/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ operation: "rerun-final", agent }),
+    });
+    assert.equal(rerun.status, 200);
+    const result = await rerun.json();
+    assert.deepEqual(result.bible.chapters.map(({ draft }: any) => draft), drafts);
+    assert.notEqual(result.manuscript, "stale");
+  }
 
   for (const file of ["manuscript.md", "editor-report.md", "continuity-report.md", "publisher-report.md"]) {
     assert.ok((await readFile(join(root, created.id, file), "utf8")).startsWith("#"));
   }
-  const persisted = JSON.parse(await readFile(join(root, created.id, "state.json"), "utf8"));
-  assert.deepEqual(persisted, completed);
-
-  const noOp = await app.request(`/projects/${created.id}/run`, { method: "POST" });
-  assert.deepEqual(await noOp.json(), completed);
   assert.ok((await readdir(join(root, created.id))).every((name) => !name.endsWith(".tmp")));
 });
 

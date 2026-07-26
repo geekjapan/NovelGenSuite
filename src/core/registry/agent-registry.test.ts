@@ -38,6 +38,30 @@ test("agent registry is the single ordered definition of all nine roles", () => 
   StoryBibleSchema.parse(canonicalBible);
 });
 
+test("continuity advances foreshadowing through planned, unresolved, and paid-off", () => {
+  const base = {
+    ...canonicalBible,
+    foreshadowingTracker: [{
+      ...canonicalBible.foreshadowingTracker[0]!,
+      status: "planned" as const,
+    }],
+  };
+  const planned = mergeAgentOutput({
+    ...base,
+    chapters: base.chapters.map((chapter) => ({ ...chapter, draft: undefined })),
+  }, "continuity", canonicalOutputs.continuity);
+  assert.equal(planned.foreshadowingTracker[0]?.status, "planned");
+
+  const unresolved = mergeAgentOutput(base, "continuity", {
+    ...canonicalOutputs.continuity,
+    missingPayoffs: [base.foreshadowingTracker[0]!.item],
+  });
+  assert.equal(unresolved.foreshadowingTracker[0]?.status, "unresolved");
+
+  const paidOff = mergeAgentOutput(base, "continuity", canonicalOutputs.continuity);
+  assert.equal(paidOff.foreshadowingTracker[0]?.status, "paid-off");
+});
+
 test("chapter outline merge preserves skeleton fields and a user title", () => {
   const bible = emptyStoryBible();
   bible.parts = [{

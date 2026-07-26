@@ -48,6 +48,8 @@ export type AgentContext = {
   chapterSummaries?: Array<{ chapterNumber: number; summary: string }>;
   foreshadowingTracker?: StoryBible["foreshadowingTracker"];
   priorReports?: Array<string>;
+  title?: string;
+  shortSynopsis?: string;
 };
 
 const clip = (value: string, maximum: number) => value.slice(0, maximum);
@@ -227,18 +229,20 @@ export const buildDraftingContext = (input: BuildContextInput): AgentContext => 
   };
 };
 
+const manuscript = (input: BuildContextInput) => input.manuscript ?? input.bible.chapters
+  .slice()
+  .sort((left, right) => left.number - right.number)
+  .map(({ draft }) => draft ?? "")
+  .join("\n\n");
+
 const manuscriptContext = (input: BuildContextInput): AgentContext => {
   const { policy } = common(input);
-  const manuscript = input.manuscript ?? input.bible.chapters
-    .slice()
-    .sort((left, right) => left.number - right.number)
-    .map(({ draft }) => draft ?? "")
-    .join("\n\n");
+  const text = manuscript(input);
   return {
     ...planningContext(input),
-    manuscript: manuscript.length <= 8_000
-      ? manuscript
-      : `${manuscript.slice(0, 4_000)}\n${policy.omissionMarker}\n${manuscript.slice(-4_000)}`,
+    manuscript: text.length <= 8_000
+      ? text
+      : `${text.slice(0, 4_000)}\n${policy.omissionMarker}\n${text.slice(-4_000)}`,
   };
 };
 
@@ -249,14 +253,13 @@ export const buildEditorContext = (input: BuildContextInput): AgentContext => ({
 
 export const buildContinuityContext = (input: BuildContextInput): AgentContext => {
   const { policy } = common(input);
-  const context = manuscriptContext(input);
-  const manuscript = context.manuscript ?? "";
+  const text = manuscript(input);
   return {
-    ...context,
+    ...planningContext(input),
     manuscript: [
-      manuscript.slice(0, 1_500),
-      manuscript.slice(Math.max(0, Math.floor(manuscript.length / 2) - 750), Math.floor(manuscript.length / 2) + 750),
-      manuscript.slice(-1_500),
+      text.slice(0, 1_500),
+      text.slice(Math.max(0, Math.floor(text.length / 2) - 750), Math.floor(text.length / 2) + 750),
+      text.slice(-1_500),
     ].join(`\n${policy.excerptMarker}\n`),
     chapterSummaries: input.bible.chapters
       .filter(({ chapterSummary }) => chapterSummary)
@@ -266,8 +269,15 @@ export const buildContinuityContext = (input: BuildContextInput): AgentContext =
 };
 
 export const buildPublisherContext = (input: BuildContextInput): AgentContext => ({
-  ...planningContext(input),
-  manuscript: manuscriptContext(input).manuscript?.slice(-2_000),
+  language: input.language,
+  prompt: common(input).prompt,
+  title: input.bible.parts[0]?.title,
+  concept: concept(input),
+  characters: characters(input),
+  plot: plot(input),
+  manuscript: manuscript(input).slice(-2_000),
+  shortSynopsis: input.bible.publisherPackage?.shortSynopsis
+    ?? input.bible.concept?.logline,
   chapterSummaries: input.bible.chapters
     .filter(({ chapterSummary }) => chapterSummary)
     .map(({ number, chapterSummary }) => ({ chapterNumber: number, summary: chapterSummary! })),
