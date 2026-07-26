@@ -27,23 +27,25 @@
 | 拡張後 85% | 到達すれば解決。未達なら needsExpansion=true+警告を残し、手動拡張を促す |
 | 85–115% | 表示上の「near」帯域(下回れば under / too-short、上回れば over) |
 
-75% 以上なら自動拡張はせず、too-short 判定だけ残して手動操作に委ねる。
+75% 以上なら自動拡張はせず、85% 未満なら too-short 判定だけ残して明示的な retry / regenerate に委ねる。85% 以上は既定でスキップする。
 
 ## 章の選択・スキップ・再開
 
-章の選択ロジックは1箇所に集約し、UI 側で独自の番号順を実装しない。
+章の選択ロジックは1箇所に集約し、UI 側で独自の番号順を実装しない。**判断: 旧来の生成対象・スキップ条件は原典記録のままにせず、essence を次の operation-aware な単一優先順位規則へ置き換える。**
 
-- **生成対象**: draft が無い章は常に対象。オプションで failed / too-short も対象に含める。forceRegenerate はすべての保護を外す。
-- **スキップ条件**: 「十分な長さの draft があり、状態が completed または edited」の章だけスキップ。draft があっても failed / too-short / needsExpansion なら再生成対象。
-- **次の章**: 番号昇順で最初の未完成章。
-- 同一実行内の重複選択は試行済み集合(attemptedChapters)で防ぐ。
+1. 中断された auto-expansion の再開では、draft の無い pending 章を番号順に生成する。
+2. 生成直後の draft が期待長の75%未満なら、元 draft を保持したまま auto-expand を1回だけ実行し、成功時のみ atomic に置換する。
+3. draft が期待長の85%以上なら、既定でスキップする。
+4. failed / 期待長の75%以上85%未満 / needsExpansion は自動対象にせず、明示的な retry / regenerate 操作でのみ対象にする。
+
+同一実行内の重複選択は試行済み集合(attemptedChapters)で防ぐ。
 
 ## 失敗時の継続ポリシー
 
 - **単章生成**: stopOnFailure=true。失敗したら即座に止めてユーザーに返す。
 - **残り一括生成/再開**: stopOnFailure=false。失敗章を failed として記録し、**次の章へ進んで独立した成功を積み上げる**。
-- 失敗章は削除せず再試行対象として残す。再生成のターゲット選択は failed → missing → 次の未完成章の優先順。
-- 中断(abort)は失敗と区別する。中断された章は cancelled として記録し、再開時は新しい AbortController で途中状態から続行する。
+- 失敗章は削除せず、明示的な retry / regenerate の対象として残す。
+- 中断(abort)は失敗と区別する。running エージェントと generating 章を pending に戻し、typed cancellation attempt metadata を保存する。`cancelled` 状態や failed への変更、自動再試行は行わない。再開時は新しい AbortController を使い、上記の選択規則に従う。
 
 ## 完了判定と最終化
 

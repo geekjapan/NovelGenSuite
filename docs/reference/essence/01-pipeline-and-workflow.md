@@ -45,7 +45,7 @@ final / drafting → planning : 後戻り(確認を挟む)
 - **構成承認は human-in-the-loop の中核**。chapter-outline 完了後に意図的に停止し(エラーではない)、ユーザーが章構成を確認・編集してから執筆に進む。承認要否はプロジェクト設定のフラグで制御し、デモ用途ではスキップできる。
 - 承認時は**既存の completed / edited 章だけを保持**し、それ以外を pending に戻す。再承認しても完成済みの本文を失わない。
 - 進捗表示上、後戻り(現在位置以前への移動)は許すが、未到達ステージへのジャンプは許さない。
-- 停止(abort)は第一級の操作。停止された running エージェントは pending に戻し、執筆中なら該当章を「失敗ではなくキャンセル」として記録し、再開候補に残す。
+- 停止(abort)は第一級の操作。停止された running エージェントと generating 章は pending に戻し、typed cancellation attempt metadata を保存する。`cancelled` 状態や failed への変更、自動再試行は行わない。**判断: キャンセル表現は原典記録のままにせず、essence をこの状態遷移へ統一する。**
 
 ## 再現性の境界
 
