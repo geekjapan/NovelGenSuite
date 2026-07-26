@@ -173,6 +173,23 @@ export const agentDefinitions = [
     merge: (bible: StoryBible, output: ReturnType<typeof ContinuityOutputSchema.parse>) => ({
       ...bible,
       continuityReport: output,
+      foreshadowingTracker: bible.foreshadowingTracker.map((tracker) => {
+        const unresolved = [...output.unresolvedForeshadowing, ...output.missingPayoffs]
+          .includes(tracker.item);
+        const introduced = bible.chapters.some(({ number, draft }) =>
+          number >= tracker.introducedIn && Boolean(draft));
+        const paidOff = tracker.payoffChapter !== null
+          && bible.chapters.some(({ number, draft }) =>
+            number >= tracker.payoffChapter! && Boolean(draft));
+        return {
+          ...tracker,
+          status: tracker.status === "paid-off"
+            ? "paid-off" as const
+            : tracker.status === "planned"
+              ? introduced ? "unresolved" as const : "planned" as const
+              : !unresolved && paidOff ? "paid-off" as const : "unresolved" as const,
+        };
+      }),
     }),
   },
   {

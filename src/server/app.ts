@@ -6,6 +6,7 @@ import {
   revisePlan,
   RunConflictError,
 } from "../core/pipeline/execute.js";
+import { hasChapterCoverage } from "../core/pipeline/chapters.js";
 import type { Generate } from "../core/pipeline/mock-llm.js";
 import {
   approveChapterOutline,
@@ -56,6 +57,10 @@ export function createApp({
   const activeRuns = new Map<string, AbortController>();
   const RunRequestSchema = z.discriminatedUnion("operation", [
     z.object({ operation: z.literal("resume") }),
+    z.object({
+      operation: z.literal("rerun-final"),
+      agent: z.enum(["editor", "continuity", "publisher"]),
+    }),
     z.object({
       operation: z.enum(["retry", "regenerate", "expand", "revise"]),
       chapterNumber: z.number().int().positive(),
@@ -241,17 +246,35 @@ export function createApp({
     if (!request.success) {
       return context.json(error("validation-error", "実行操作を確認してください。"), 400);
     }
+    if (request.data.operation === "rerun-final") {
+      const finalAgentId = request.data.agent;
+      const finalAgent = state.agents.find(({ id: agentId }) =>
+        agentId === finalAgentId);
+      if (
+        state.workflow.stage !== "final"
+        || !hasChapterCoverage(state)
+        || finalAgent?.status !== "completed"
+      ) {
+        return context.json(error(
+          "invalid-transition",
+          "完了済みの仕上げ工程だけを再実行できます。",
+        ), 409);
+      }
+    }
     const controller = new AbortController();
     activeRuns.set(id, controller);
     try {
       return context.json(await executePipeline(state, pipelineRuntime, generate, {
         chapterOperation: request.data.operation === "resume"
           ? { type: "resume" }
+          : request.data.operation === "rerun-final"
+            ? { type: "resume" }
           : {
             type: request.data.operation,
             chapterNumber: request.data.chapterNumber,
             instruction: request.data.instruction,
           },
+        finalAgent: request.data.operation === "rerun-final" ? request.data.agent : undefined,
         signal: controller.signal,
         alternateGenerate,
       }));

@@ -204,7 +204,7 @@ export const PublisherOutputSchema = z.object({
   tagline: text(120),
   socialPosts: list(text(280), 6),
   submissionDescription: text(1_000),
-});
+}).transform((output) => ({ ...output, promotedTitle: output.titleIdeas[0]! }));
 
 export type ConceptOutput = z.infer<typeof ConceptOutputSchema>;
 export type CharacterOutput = z.infer<typeof CharacterOutputSchema>;

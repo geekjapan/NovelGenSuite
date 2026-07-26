@@ -145,6 +145,7 @@ const continuity = {
 } satisfies ContinuityOutput;
 
 const publisher = {
+  promotedTitle: "雨の最終便",
   titleIdeas: ["雨の最終便", "朝に届く手紙", "青い花の消印"],
   shortSynopsis: "閉鎖前夜の郵便局で、新人局員が宛先の消えた手紙を見つける。",
   longSynopsis: "閉鎖を翌朝に控えた雨坂郵便局で、新人局員の澪は消印のない古い手紙を発見する。規則と善意の間で迷いながら受取人の冬子を探し、正式な手続きで手渡す道を選ぶ。亡き姉の謝罪を読んだ冬子は、自分自身へ返事を送り、届かなかった言葉を明日へつなぐ。",
