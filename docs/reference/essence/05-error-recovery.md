@@ -51,5 +51,5 @@
 
 - エージェントごとの経過時間を段階別(LLM 呼び出し、parse、正規化、マージ)にログし、ボトルネックを分解できるようにする。
 - 章生成順、プロンプトサイズ(文字数・推定トークン)をログする。
-- parse 失敗時は生応答の**長さと先頭数百文字だけ**をログする(全文を書かない — コストと漏えい面の抑制)。
+- parse 失敗時は既定で raw 本文を一切ログせず、length / classification / provider / safe random correlation ID / process-local ephemeral keyed HMAC fingerprint だけを記録する。raw excerpt は明示的な local debug 時に限り、warning・redaction・length limit を伴って表示できるが、永続化・共有・telemetry 送出は禁止する。**判断: 生抜粋指針は原典記録のままにせず、essence をこの観測可能性契約へ更新する。**
 - provider 切替・構造フォールバックはプロジェクト状態にフラグを残し、「通常応答」と「救済経路」を後から区別できるようにする。
