@@ -32,15 +32,29 @@ export async function reconcileOrphanedRuns(root: string): Promise<void> {
     try {
       const state = await readProjectState(root, id);
       if (!state?.agents.some(({ status }) => status === "running")) continue;
-      const summary = "サーバー再起動時にこの役は実行中のまま中断されました。再開で続行できます。";
+      const attempt = {
+        type: "cancellation" as const,
+        operation: "resume" as const,
+        attemptedAt: new Date().toISOString(),
+      };
       await writeProjectState(root, PipelineProjectStateSchema.parse({
         ...state,
         meta: { ...state.meta, updatedAt: new Date().toISOString() },
         agents: state.agents.map((agent) => agent.status === "running"
-          ? { ...agent, status: "failed" as const, error: summary }
+          ? {
+              ...agent,
+              status: "pending" as const,
+              error: undefined,
+              attempts: [...(agent.attempts ?? []), attempt],
+            }
           : agent),
         chapterRuns: state.chapterRuns.map((chapter) => chapter.status === "generating"
-          ? { ...chapter, status: "failed" as const, error: summary }
+          ? {
+              ...chapter,
+              status: "pending" as const,
+              error: undefined,
+              attempts: [...(chapter.attempts ?? []), attempt],
+            }
           : chapter),
       }));
     } catch (error) {

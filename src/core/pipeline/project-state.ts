@@ -1,8 +1,14 @@
 import { z } from "zod";
 
 import { StoryBibleSchema, emptyStoryBible } from "../../shared/story-bible.js";
-import { ProjectStateSchema } from "../../shared/contracts.js";
+import { findLanguagePolicy, ProjectStateSchema } from "../../shared/contracts.js";
 import { agentDefinitions, type AgentId } from "../registry/agent-registry.js";
+
+const CancellationAttemptSchema = z.object({
+  type: z.literal("cancellation"),
+  operation: z.enum(["resume", "retry", "regenerate", "auto-expand"]),
+  attemptedAt: z.iso.datetime(),
+});
 
 const AgentRunSchema = z.object({
   id: z.enum(agentDefinitions.map(({ id }) => id) as [AgentId, ...AgentId[]]),
@@ -10,13 +16,16 @@ const AgentRunSchema = z.object({
   startedAt: z.iso.datetime().optional(),
   completedAt: z.iso.datetime().optional(),
   error: z.string().optional(),
+  attempts: z.array(CancellationAttemptSchema).optional(),
 });
 
 const ChapterRunSchema = z.object({
   chapterNumber: z.number().int().positive(),
   status: z.enum(["pending", "generating", "completed", "failed", "edited"]),
   lengthStatus: z.enum(["too-short", "under", "near", "over"]).optional(),
+  needsExpansion: z.boolean().optional(),
   error: z.string().optional(),
+  attempts: z.array(CancellationAttemptSchema).optional(),
 });
 
 export const PipelineProjectStateSchema = ProjectStateSchema.extend({
@@ -37,9 +46,11 @@ const chapterRole = (number: number, count: number) => {
 };
 
 export function initializePipelineState(
-  state: z.infer<typeof ProjectStateSchema>,
+  input: z.input<typeof ProjectStateSchema>,
 ): PipelineProjectState {
+  const state = ProjectStateSchema.parse(input);
   const { chapterCount, chapterLength } = state.configuration;
+  const unit = findLanguagePolicy(state.language)!.lengthUnit;
   const chapters = Array.from({ length: chapterCount }, (_, index) => {
     const number = index + 1;
     return {
@@ -54,7 +65,7 @@ export function initializePipelineState(
       foreshadowing: [],
       lengthPlan: {
         target: chapterLength,
-        unit: "characters" as const,
+        unit,
         min: Math.max(1, Math.floor(chapterLength * 0.85)),
         max: Math.ceil(chapterLength * 1.15),
       },

@@ -6,9 +6,11 @@ import { canonicalOutputs } from "../../../test/fixtures/canonical-story.js";
 import { executePipeline, type PipelineRuntime } from "../pipeline/execute.js";
 import { generateMock } from "../pipeline/mock-llm.js";
 import { initializePipelineState } from "../pipeline/project-state.js";
+import { agentDefinitions } from "../registry/agent-registry.js";
 import {
   createGenerateFromEnv,
   createOpenAIGenerate,
+  LlmError,
   sanitizeErrorMessage,
 } from "./openai-client.js";
 
@@ -46,7 +48,6 @@ const close = (server: Server) => new Promise<void>((resolve, reject) =>
 test("fake OpenAI server completes the pipeline after compact fenced-JSON recovery", async () => {
   const requests: Array<{ authorization?: string; body: any }> = [];
   let conceptAttempts = 0;
-  let draftIndex = 0;
   const { server, baseUrl } = await listen((request, response) => {
     let raw = "";
     request.setEncoding("utf8");
@@ -56,7 +57,10 @@ test("fake OpenAI server completes the pipeline after compact fenced-JSON recove
       requests.push({ authorization: request.headers.authorization, body });
       const user = body.messages[1].content as string;
       const id = /ROLE=([^\n]+)/.exec(user)?.[1] as keyof typeof canonicalOutputs;
-      let output = id === "drafting" ? canonicalOutputs.drafting[draftIndex++] : canonicalOutputs[id];
+      const chapterNumber = Number(/"targetChapter":\{"number":(\d+)/.exec(user)?.[1] ?? 1);
+      const output = id === "drafting"
+        ? canonicalOutputs.drafting[chapterNumber - 1]
+        : canonicalOutputs[id];
       let content = JSON.stringify(output);
       if (id === "concept" && conceptAttempts++ === 0) content = '{"logline":"broken"';
       else if (id === "concept") content = `\`\`\`json\n${content}\n\`\`\``;
@@ -119,6 +123,33 @@ test("AbortError is not compact-retried", async () => {
   const failed = await executePipeline(initial(), runtime(), generate);
   assert.equal(calls, 1);
   assert.equal(failed.agents[0]!.status, "failed");
+});
+
+test("the OpenAI boundary classifies wall-clock timeout separately from abort", async () => {
+  const generate = createOpenAIGenerate({
+    baseUrl: "http://127.0.0.1:1/v1",
+    apiKey: "test-secret",
+    model: "test-model",
+    fetch: async () => {
+      throw new DOMException("timed out", "TimeoutError");
+    },
+  });
+  const project = initial();
+  const definition = agentDefinitions[0];
+  await assert.rejects(
+    generate({
+      agentId: definition.id,
+      context: definition.buildContext({
+        prompt: project.prompt,
+        language: project.language,
+        bible: project.bible,
+        completedOutputs: project.completedOutputs,
+      }),
+      chapterCount: project.configuration.chapterCount,
+      compact: false,
+    }),
+    (cause) => cause instanceof LlmError && cause.kind === "timeout" && cause.retryable,
+  );
 });
 
 test("environment selection keeps mock fallback and requires an explicit model", () => {

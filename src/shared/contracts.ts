@@ -26,17 +26,53 @@ export const languagePolicies = {
     promptHeadCharacters: 600,
     promptTailCharacters: 300,
     previousChapterTailCharacters: 300,
+    chapterLengthWarningThreshold: 8_000,
     omissionMarker: "…省略…",
     excerptMarker: "…抜粋…",
   },
+  en: {
+    locale: "en-US",
+    lengthUnit: "words",
+    promptHeadCharacters: 600,
+    promptTailCharacters: 300,
+    previousChapterTailCharacters: 600,
+    chapterLengthWarningThreshold: 3_000,
+    omissionMarker: "…omitted…",
+    excerptMarker: "…excerpt…",
+  },
 } as const;
 
-export const SupportedLanguageSchema = z.enum(["ja"]);
+export const SupportedLanguageSchema = z.enum(["ja", "en"]);
 export type SupportedLanguage = z.infer<typeof SupportedLanguageSchema>;
 
 export function findLanguagePolicy(language: string) {
   const result = SupportedLanguageSchema.safeParse(language);
   return result.success ? languagePolicies[result.data] : undefined;
+}
+
+export const ProjectWarningSchema = z.object({
+  code: z.literal("chapter-length-high"),
+  chapterLength: z.number().int().positive(),
+  threshold: z.number().int().positive(),
+  unit: z.enum(["characters", "words"]),
+  message: z.string(),
+});
+export type ProjectWarning = z.infer<typeof ProjectWarningSchema>;
+
+export function chapterLengthWarnings(
+  language: SupportedLanguage,
+  configuration: Configuration,
+): ProjectWarning[] {
+  const policy = languagePolicies[language];
+  return configuration.chapterLength > policy.chapterLengthWarningThreshold
+    ? [{
+        code: "chapter-length-high",
+        chapterLength: configuration.chapterLength,
+        threshold: policy.chapterLengthWarningThreshold,
+        unit: policy.lengthUnit,
+        message: `一章の長さが推奨上限 ${policy.chapterLengthWarningThreshold} ${policy.lengthUnit} を超えています。`,
+      }]
+    : [];
 }
 
 export const CreateProjectRequestSchema = z.object({
@@ -51,6 +87,7 @@ export const ProjectStateSchema = z.object({
   prompt: z.string().min(1),
   language: SupportedLanguageSchema,
   configuration: ConfigurationSchema,
+  warnings: z.array(ProjectWarningSchema).default([]),
   meta: z.object({
     schemaVersion: z.literal(1),
     createdAt: z.iso.datetime(),
@@ -63,6 +100,7 @@ export const WebProjectStateSchema = ProjectStateSchema.pick({
   id: true,
   prompt: true,
   meta: true,
+  warnings: true,
 }).extend({
   agents: z.array(z.object({
     id: z.string(),

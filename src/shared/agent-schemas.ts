@@ -56,7 +56,7 @@ export const PlotOutputSchema = z.object({
 
 export const LengthPlanSchema = z.object({
   target: z.number().int().positive(),
-  unit: z.literal("characters"),
+  unit: z.enum(["characters", "words"]),
   min: z.number().int().positive(),
   max: z.number().int().positive(),
 }).refine(({ min, target, max }) => min <= target && target <= max, {

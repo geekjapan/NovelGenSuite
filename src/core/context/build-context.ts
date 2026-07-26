@@ -26,9 +26,11 @@ export type BuildContextInput = {
   completedOutputs: Partial<Record<string, unknown>>;
   chapterNumber?: number;
   manuscript?: string;
+  currentDraft?: string;
 };
 
 export type AgentContext = {
+  language: SupportedLanguage;
   prompt: string;
   concept?: ConceptOutput;
   characters?: CharacterOutput;
@@ -41,6 +43,7 @@ export type AgentContext = {
   targetChapter?: Pick<Chapter, "number" | "title" | "purpose" | "emotionalTurn" | "keyEvents" | "foreshadowing" | "lengthPlan">;
   priorChapterSummaries?: Array<{ chapterNumber: number; summary: string }>;
   previousChapterEnding?: string;
+  currentDraft?: string;
   manuscript?: string;
   chapterSummaries?: Array<{ chapterNumber: number; summary: string }>;
   foreshadowingTracker?: StoryBible["foreshadowingTracker"];
@@ -130,6 +133,7 @@ const plot = (input: BuildContextInput) => {
 };
 
 const planningContext = (input: BuildContextInput): AgentContext => ({
+  language: input.language,
   prompt: common(input).prompt,
   concept: concept(input),
   characters: characters(input),
@@ -138,15 +142,18 @@ const planningContext = (input: BuildContextInput): AgentContext => ({
 });
 
 export const buildConceptContext = (input: BuildContextInput): AgentContext => ({
+  language: input.language,
   prompt: common(input).prompt,
 });
 
 export const buildCharacterContext = (input: BuildContextInput): AgentContext => ({
+  language: input.language,
   prompt: common(input).prompt,
   concept: concept(input),
 });
 
 export const buildWorldbuildingContext = (input: BuildContextInput): AgentContext => ({
+  language: input.language,
   prompt: common(input).prompt,
   concept: concept(input),
   characters: characters(input),
@@ -213,7 +220,10 @@ export const buildDraftingContext = (input: BuildContextInput): AgentContext => 
       .sort((left, right) => left.number - right.number)
       .filter(({ number, chapterSummary }) => number < target.number && chapterSummary)
       .map(({ number, chapterSummary }) => ({ chapterNumber: number, summary: chapterSummary! })),
-    previousChapterEnding: previous?.draft?.slice(-policy.previousChapterTailCharacters),
+    previousChapterEnding: previous?.draft && (policy.lengthUnit === "words"
+      ? previous.draft.trim().split(/\s+/).slice(-100).join(" ")
+      : previous.draft.slice(-policy.previousChapterTailCharacters)),
+    currentDraft: input.currentDraft,
   };
 };
 

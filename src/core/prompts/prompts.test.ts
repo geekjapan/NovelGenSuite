@@ -87,3 +87,38 @@ test("each role asks only for its declared English JSON keys", () => {
     for (const key of expected[id]) assert.match(prompt.user, new RegExp(`\\b${key}\\b`));
   }
 });
+
+test("creative output language follows the project language", () => {
+  const context = agentDefinitions[0].buildContext({ ...input, language: "en" });
+  const prompt = buildPrompt({
+    agentId: "concept",
+    context,
+    chapterCount: 1,
+    compact: false,
+  });
+  assert.match(prompt.system, /creative text values must be English/);
+});
+
+test("drafting guidance derives the 90% minimum and 120% preferred maximum in each unit", () => {
+  for (const [language, unit] of [["ja", "characters"], ["en", "words"]] as const) {
+    const bible = structuredClone(canonicalBible);
+    bible.chapters[0]!.lengthPlan = { target: 1_000, min: 850, max: 1_150, unit };
+    const context = agentDefinitions[5].buildContext({
+      ...input,
+      language,
+      bible,
+      chapterNumber: 1,
+    });
+    const prompt = buildPrompt({
+      agentId: "drafting",
+      context,
+      chapterCount: 2,
+      chapterNumber: 1,
+      operation: "generate",
+      compact: false,
+    });
+
+    assert.match(prompt.user, new RegExp(`LENGTH GUIDANCE: minimum=900 ${unit}`));
+    assert.match(prompt.user, new RegExp(`preferredMaximum=1200 ${unit}`));
+  }
+});

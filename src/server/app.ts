@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "zod";
 
 import {
   executePipeline,
@@ -27,7 +28,14 @@ export function createApp({ projectsRoot, generate }: { projectsRoot: string; ge
   const app = new Hono();
   const reconciliation = reconcileOrphanedRuns(projectsRoot);
   const pipelineRuntime = createPipelineRuntime(projectsRoot);
-  const activeRuns = new Set<string>();
+  const activeRuns = new Map<string, AbortController>();
+  const RunRequestSchema = z.discriminatedUnion("operation", [
+    z.object({ operation: z.literal("resume") }),
+    z.object({
+      operation: z.enum(["retry", "regenerate"]),
+      chapterNumber: z.number().int().positive(),
+    }),
+  ]).default({ operation: "resume" });
 
   app.use("*", async (_context, next) => {
     await reconciliation;
@@ -76,9 +84,29 @@ export function createApp({ projectsRoot, generate }: { projectsRoot: string; ge
     const state = await readProjectState(projectsRoot, id);
     if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
     if (activeRuns.has(id)) return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
-    activeRuns.add(id);
+    const raw = await context.req.text();
+    let json: unknown = undefined;
     try {
-      return context.json(await executePipeline(state, pipelineRuntime, generate));
+      json = raw ? JSON.parse(raw) : undefined;
+    } catch {
+      return context.json(error("validation-error", "JSON が不正です。"), 400);
+    }
+    const request = RunRequestSchema.safeParse(json);
+    if (!request.success) {
+      return context.json(error("validation-error", "実行操作を確認してください。"), 400);
+    }
+    const controller = new AbortController();
+    activeRuns.set(id, controller);
+    try {
+      return context.json(await executePipeline(state, pipelineRuntime, generate, {
+        chapterOperation: request.data.operation === "resume"
+          ? { type: "resume" }
+          : {
+              type: request.data.operation,
+              chapterNumber: request.data.chapterNumber,
+            },
+        signal: controller.signal,
+      }));
     } catch (cause) {
       if (cause instanceof RunConflictError) {
         return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
@@ -87,6 +115,19 @@ export function createApp({ projectsRoot, generate }: { projectsRoot: string; ge
     } finally {
       activeRuns.delete(id);
     }
+  });
+
+  app.post("/projects/:id/abort", async (context) => {
+    const id = context.req.param("id");
+    if (!await readProjectState(projectsRoot, id)) {
+      return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+    }
+    const controller = activeRuns.get(id);
+    if (!controller) {
+      return context.json(error("run-conflict", "パイプラインは実行されていません。"), 409);
+    }
+    controller.abort();
+    return context.json({ aborted: true }, 202);
   });
 
   app.notFound((context) =>
