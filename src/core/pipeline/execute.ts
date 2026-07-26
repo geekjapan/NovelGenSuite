@@ -1,5 +1,5 @@
 import { agentDefinitions, mergeAgentOutput, type AgentId } from "../registry/agent-registry.js";
-import { createGenerateFromEnv, shouldCompactRetry } from "../llm/openai-client.js";
+import { createGenerateFromEnv, LlmError, shouldCompactRetry } from "../llm/openai-client.js";
 import { rebuildManuscript } from "./artifacts.js";
 import {
   classifyLength,
@@ -27,6 +27,7 @@ class PipelineStepError extends Error {
   constructor(
     readonly state: PipelineProjectState,
     readonly cancelled = false,
+    readonly summary = EXECUTION_ERROR,
   ) {
     super("Pipeline step failed");
   }
@@ -34,6 +35,14 @@ class PipelineStepError extends Error {
 
 const EXECUTION_ERROR = "Agent execution failed";
 const EXPANSION_ERROR = "Automatic expansion failed";
+
+const chapterExecutionError = (
+  cause: unknown,
+  chapterNumber: number,
+  operation: "generate" | "retry" | "regenerate" | "auto-expand",
+) => cause instanceof LlmError && cause.kind === "timeout"
+  ? `第${chapterNumber}章の${operation === "auto-expand" ? "自動拡張" : "生成"}がタイムアウトしました。章長を減らすか、モデルを変更してください。`
+  : operation === "auto-expand" ? EXPANSION_ERROR : EXECUTION_ERROR;
 
 const changed = (state: PipelineProjectState): PipelineProjectState => ({
   ...state,
@@ -147,9 +156,16 @@ async function runDrafting(
         operation: operation.type === "resume" ? "generate" : operation.type,
         signal,
       });
-    } catch {
+    } catch (cause) {
       if (signal?.aborted) throw new PipelineStepError(state, true);
-      state = setChapter(state, chapterNumber, { status: "failed", error: EXECUTION_ERROR });
+      state = setChapter(state, chapterNumber, {
+        status: "failed",
+        error: chapterExecutionError(
+          cause,
+          chapterNumber,
+          operation.type === "resume" ? "generate" : operation.type,
+        ),
+      });
       state = await save(runtime, state);
       if (stopOnFailure) break;
       continue;
@@ -197,13 +213,13 @@ async function runDrafting(
           needsExpansion: status === "too-short" || status === "under",
           error: undefined,
         });
-      } catch {
+      } catch (cause) {
         if (signal?.aborted) throw new PipelineStepError(state, true);
         state = setChapter(state, chapterNumber, {
           status: "completed",
           lengthStatus: status,
           needsExpansion: true,
-          error: EXPANSION_ERROR,
+          error: chapterExecutionError(cause, chapterNumber, "auto-expand"),
         });
       }
     } else {
@@ -287,7 +303,13 @@ export async function executePipeline(
       resolvedGenerate ??= createGenerateFromEnv();
       if (definition.id === "drafting") {
         state = await runDrafting(runtime, state, resolvedGenerate, operation, options.signal);
-        if (!hasChapterCoverage(state)) throw new PipelineStepError(state);
+        if (!hasChapterCoverage(state)) {
+          throw new PipelineStepError(
+            state,
+            false,
+            state.chapterRuns.find(({ status }) => status === "failed")?.error ?? EXECUTION_ERROR,
+          );
+        }
       } else {
         const output = await invoke(state, definition.id, resolvedGenerate, {
           signal: options.signal,
@@ -309,7 +331,10 @@ export async function executePipeline(
       if (options.signal?.aborted || cause instanceof PipelineStepError && cause.cancelled) {
         return save(runtime, cancelRunning(state, definition.id, operation));
       }
-      state = setAgent(state, definition.id, { status: "failed", error: EXECUTION_ERROR });
+      state = setAgent(state, definition.id, {
+        status: "failed",
+        error: cause instanceof PipelineStepError ? cause.summary : EXECUTION_ERROR,
+      });
       return save(runtime, state);
     }
   }

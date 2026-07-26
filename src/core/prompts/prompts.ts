@@ -39,6 +39,14 @@ const compactContext = (request: GenerateRequest) => {
     : serialized;
 };
 
+const draftingLengthGuidance = (request: GenerateRequest) => {
+  if (request.agentId !== "drafting") return "";
+  const plan = request.context.targetChapter?.lengthPlan;
+  return plan
+    ? `LENGTH GUIDANCE: minimum=${Math.ceil(plan.target * 0.9)} ${plan.unit}; preferredMaximum=${Math.floor(plan.target * 1.2)} ${plan.unit}.`
+    : "";
+};
+
 export function buildPrompt(request: GenerateRequest) {
   return {
     system: system(request),
@@ -49,6 +57,7 @@ export function buildPrompt(request: GenerateRequest) {
       request.operation === "auto-expand"
         ? "AUTO EXPAND: CONTEXT.currentDraft を保持して不足する描写を加え、章全体を返す。"
         : "",
+      draftingLengthGuidance(request),
       request.agentId === "chapter-outline"
         ? `SKELETON=${JSON.stringify(request.context.chapterSkeleton)}`
         : "",

@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { generateMock, type Generate } from "../core/pipeline/mock-llm.js";
 import { readProjectState, writeProjectState } from "../core/store/state-json.js";
+import { LlmError } from "../core/llm/openai-client.js";
 import { createApp } from "./app.js";
 
 const project = async (
@@ -309,4 +310,78 @@ test("HTTP API returns stable input and not-found error codes", async () => {
     assert.equal((await response.json()).error.code, code);
   }
   assert.equal((await app.request("/projects/missing/state")).status, 404);
+});
+
+test("chapter length warning thresholds are non-blocking at Japanese and English boundaries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const app = createApp({ projectsRoot: root });
+  for (const [language, threshold, unit] of [
+    ["ja", 8_000, "characters"],
+    ["en", 3_000, "words"],
+  ] as const) {
+    for (const [chapterLength, warningCount] of [[threshold, 0], [threshold + 1, 1]] as const) {
+      const response = await app.request("/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: "story",
+          language,
+          configuration: { chapterCount: 1, chapterLength },
+        }),
+      });
+      assert.equal(response.status, 201);
+      const created = await response.json();
+      assert.equal(created.warnings.length, warningCount);
+      if (warningCount) {
+        assert.equal(created.warnings[0].code, "chapter-length-high");
+        assert.equal(created.warnings[0].threshold, threshold);
+        assert.equal(created.warnings[0].unit, unit);
+      }
+    }
+  }
+});
+
+test("draft generation timeout keeps chapter number and actionable advice in the error contract", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const generate: Generate = async (request) => {
+    if (request.agentId === "drafting") {
+      throw new LlmError("OpenAI request timed out", true, "timeout");
+    }
+    return generateMock(request);
+  };
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app, { chapterCount: 1, chapterLength: 100 });
+  const failed = await (await app.request(`/projects/${created.id}/run`, { method: "POST" })).json();
+
+  assert.match(failed.chapterRuns[0].error, /第1章/);
+  assert.match(failed.chapterRuns[0].error, /章長を減らす/);
+  assert.match(failed.chapterRuns[0].error, /モデルを変更/);
+  assert.equal(failed.agents.find(({ id }: any) => id === "drafting").error, failed.chapterRuns[0].error);
+});
+
+test("auto-expansion timeout keeps its operation and advice while preserving coverage", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const generate: Generate = async (request) => {
+    if (request.agentId === "drafting" && request.operation === "auto-expand") {
+      throw new LlmError("OpenAI request timed out", true, "timeout");
+    }
+    if (request.agentId === "drafting") {
+      return JSON.stringify({
+        chapterNumber: request.chapterNumber,
+        draft: "短",
+        chapterSummary: "要約",
+        continuityNotes: ["継続"],
+      });
+    }
+    return generateMock(request);
+  };
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app, { chapterCount: 1, chapterLength: 100 });
+  const completed = await (await app.request(`/projects/${created.id}/run`, { method: "POST" })).json();
+
+  assert.equal(completed.chapterRuns[0].status, "completed");
+  assert.match(completed.chapterRuns[0].error, /第1章の自動拡張/);
+  assert.match(completed.chapterRuns[0].error, /章長を減らす/);
+  assert.match(completed.chapterRuns[0].error, /モデルを変更/);
+  assert.equal(completed.bible.chapters.filter(({ draft }: any) => draft).length, 1);
 });

@@ -46,8 +46,9 @@ const chapterRole = (number: number, count: number) => {
 };
 
 export function initializePipelineState(
-  state: z.infer<typeof ProjectStateSchema>,
+  input: z.input<typeof ProjectStateSchema>,
 ): PipelineProjectState {
+  const state = ProjectStateSchema.parse(input);
   const { chapterCount, chapterLength } = state.configuration;
   const unit = findLanguagePolicy(state.language)!.lengthUnit;
   const chapters = Array.from({ length: chapterCount }, (_, index) => {

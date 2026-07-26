@@ -7,7 +7,11 @@ export const DEFAULT_OPENAI_BASE_URL = "http://127.0.0.1:20128/v1";
 const DEFAULT_TIMEOUT_MS = 600_000;
 
 export class LlmError extends Error {
-  constructor(message: string, readonly retryable: boolean) {
+  constructor(
+    message: string,
+    readonly retryable: boolean,
+    readonly kind: "provider" | "timeout" = "provider",
+  ) {
     super(message);
     this.name = "LlmError";
   }
@@ -51,6 +55,7 @@ export function createOpenAIGenerate(options: OpenAIOptions): Generate {
 
   return async (request) => {
     const prompt = buildPrompt(request);
+    const timeout = AbortSignal.timeout(DEFAULT_TIMEOUT_MS);
     let response: Response;
     try {
       response = await fetchImpl(endpoint, {
@@ -66,11 +71,11 @@ export function createOpenAIGenerate(options: OpenAIOptions): Generate {
             { role: "user", content: prompt.user },
           ],
         }),
-        signal: request.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+        signal: request.signal ? AbortSignal.any([request.signal, timeout]) : timeout,
       });
     } catch (cause) {
       if (cause instanceof Error && cause.name === "TimeoutError") {
-        throw new LlmError("OpenAI request timed out", true);
+        throw new LlmError("OpenAI request timed out", true, "timeout");
       }
       if (cause instanceof Error && cause.name === "AbortError") {
         throw new LlmError("OpenAI request aborted", false);

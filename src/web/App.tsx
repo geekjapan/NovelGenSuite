@@ -210,6 +210,8 @@ function ProjectView({ id, runFailed, onRunStarted }: { id: string; runFailed: b
       <div className="total"><strong>{completed}</strong><span>/ 9 ROLES</span></div>
     </header>
     <ErrorNotice error={error} />
+    {project.warnings.map((warning) =>
+      <p role="status" key={warning.code}>{warning.message}</p>)}
 
     {startFailed ? <section className="failure" role="alert">
       <p className="eyebrow">RUN NOT STARTED</p>
