@@ -33,6 +33,16 @@ test("mock run completes nine roles and persists manuscript and three Markdown r
   const created = await project(app);
   assert.equal(created.configuration.chapterCount, 2);
 
+  const premature = await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ operation: "rerun-final", agent: "editor" }),
+  });
+  assert.equal(premature.status, 409);
+  assert.equal((await premature.json() as any).error.code, "invalid-transition");
+  const unchanged = await (await app.request(`/projects/${created.id}/state`)).json() as any;
+  assert.ok(unchanged.agents.every(({ status }: any) => status === "pending"));
+
   const response = await app.request(`/projects/${created.id}/run`, { method: "POST" });
   assert.equal(response.status, 200);
   const completed = await response.json();

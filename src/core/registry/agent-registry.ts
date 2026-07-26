@@ -183,9 +183,11 @@ export const agentDefinitions = [
             number >= tracker.payoffChapter! && Boolean(draft));
         return {
           ...tracker,
-          status: unresolved
-            ? "unresolved" as const
-            : paidOff ? "paid-off" as const : introduced ? "unresolved" as const : "planned" as const,
+          status: tracker.status === "paid-off"
+            ? "paid-off" as const
+            : tracker.status === "planned"
+              ? introduced ? "unresolved" as const : "planned" as const
+              : !unresolved && paidOff ? "paid-off" as const : "unresolved" as const,
         };
       }),
     }),

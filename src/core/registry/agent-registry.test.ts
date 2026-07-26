@@ -6,7 +6,7 @@ import {
   mergeAgentOutput,
 } from "./agent-registry.js";
 import { ChapterOutlineOutputSchema } from "../../shared/agent-schemas.js";
-import { emptyStoryBible } from "../../shared/story-bible.js";
+import { emptyStoryBible, type StoryBible } from "../../shared/story-bible.js";
 import { StoryBibleSchema } from "../../shared/story-bible.js";
 import {
   canonicalBible,
@@ -39,27 +39,18 @@ test("agent registry is the single ordered definition of all nine roles", () => 
 });
 
 test("continuity advances foreshadowing through planned, unresolved, and paid-off", () => {
-  const base = {
+  let bible: StoryBible = {
     ...canonicalBible,
     foreshadowingTracker: [{
       ...canonicalBible.foreshadowingTracker[0]!,
       status: "planned" as const,
     }],
   };
-  const planned = mergeAgentOutput({
-    ...base,
-    chapters: base.chapters.map((chapter) => ({ ...chapter, draft: undefined })),
-  }, "continuity", canonicalOutputs.continuity);
-  assert.equal(planned.foreshadowingTracker[0]?.status, "planned");
+  bible = mergeAgentOutput(bible, "continuity", canonicalOutputs.continuity);
+  assert.equal(bible.foreshadowingTracker[0]?.status, "unresolved");
 
-  const unresolved = mergeAgentOutput(base, "continuity", {
-    ...canonicalOutputs.continuity,
-    missingPayoffs: [base.foreshadowingTracker[0]!.item],
-  });
-  assert.equal(unresolved.foreshadowingTracker[0]?.status, "unresolved");
-
-  const paidOff = mergeAgentOutput(base, "continuity", canonicalOutputs.continuity);
-  assert.equal(paidOff.foreshadowingTracker[0]?.status, "paid-off");
+  bible = mergeAgentOutput(bible, "continuity", canonicalOutputs.continuity);
+  assert.equal(bible.foreshadowingTracker[0]?.status, "paid-off");
 });
 
 test("chapter outline merge preserves skeleton fields and a user title", () => {

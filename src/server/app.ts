@@ -6,6 +6,7 @@ import {
   revisePlan,
   RunConflictError,
 } from "../core/pipeline/execute.js";
+import { hasChapterCoverage } from "../core/pipeline/chapters.js";
 import type { Generate } from "../core/pipeline/mock-llm.js";
 import {
   approveChapterOutline,
@@ -244,6 +245,21 @@ export function createApp({
     const request = RunRequestSchema.safeParse(json);
     if (!request.success) {
       return context.json(error("validation-error", "実行操作を確認してください。"), 400);
+    }
+    if (request.data.operation === "rerun-final") {
+      const finalAgentId = request.data.agent;
+      const finalAgent = state.agents.find(({ id: agentId }) =>
+        agentId === finalAgentId);
+      if (
+        state.workflow.stage !== "final"
+        || !hasChapterCoverage(state)
+        || finalAgent?.status !== "completed"
+      ) {
+        return context.json(error(
+          "invalid-transition",
+          "完了済みの仕上げ工程だけを再実行できます。",
+        ), 409);
+      }
     }
     const controller = new AbortController();
     activeRuns.set(id, controller);
