@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import {
+  chapterLengthWarnings,
   ProjectStateSchema,
   type Configuration,
   type SupportedLanguage,
@@ -54,6 +55,7 @@ export async function createProject(
     const state = initializePipelineState(ProjectStateSchema.parse({
       id,
       ...input,
+      warnings: chapterLengthWarnings(input.language, input.configuration),
       meta: { schemaVersion: 1, createdAt: now, updatedAt: now },
     }));
     try {

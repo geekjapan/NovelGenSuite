@@ -56,7 +56,7 @@ export const PlotOutputSchema = z.object({
 
 export const LengthPlanSchema = z.object({
   target: z.number().int().positive(),
-  unit: z.literal("characters"),
+  unit: z.enum(["characters", "words"]),
   min: z.number().int().positive(),
   max: z.number().int().positive(),
 }).refine(({ min, target, max }) => min <= target && target <= max, {
@@ -124,6 +124,13 @@ export const ChapterOutlineOutputSchema = z.object({
   foreshadowingTracker: list(ForeshadowingTrackerItemSchema, 3),
 }).superRefine(({ parts }, context) => {
   const chapters = parts.flatMap((part) => part.chapters);
+  if (new Set(parts.map(({ number }) => number)).size !== parts.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["parts"],
+      message: "part numbers must be unique",
+    });
+  }
   if (new Set(chapters.map(({ number }) => number)).size !== chapters.length) {
     context.addIssue({
       code: "custom",
@@ -149,6 +156,27 @@ export const DraftingOutputSchema = z.object({
   draft: text(50_000),
   chapterSummary: text(500),
   continuityNotes: list(text(280), 8),
+});
+
+export const ExpansionOutputSchema = z.object({
+  draft: text(50_000),
+  expansionSummary: text(500),
+});
+
+export const ChapterRevisionOutputSchema = z.object({
+  chapterNumber: z.number().int().positive(),
+  draft: text(50_000),
+  chapterSummary: text(500),
+});
+
+export const PlanRevisionOutputSchema = z.object({
+  patch: z.object({
+    parts: z.array(ChapterOutlinePartSchema).min(1).max(16).optional(),
+    styleGuide: StyleGuideSchema.optional(),
+    foreshadowingTracker: z.array(ForeshadowingTrackerItemSchema).max(3).optional(),
+  }),
+  explanation: text(500),
+  structureChanged: z.boolean(),
 });
 
 export const EditorOutputSchema = z.object({
@@ -183,7 +211,7 @@ export const PublisherOutputSchema = z.object({
   tagline: text(120),
   socialPosts: list(text(280), 6),
   submissionDescription: text(1_000),
-});
+}).transform((output) => ({ ...output, promotedTitle: output.titleIdeas[0]! }));
 
 export type ConceptOutput = z.infer<typeof ConceptOutputSchema>;
 export type CharacterOutput = z.infer<typeof CharacterOutputSchema>;
@@ -191,6 +219,7 @@ export type WorldbuildingOutput = z.infer<typeof WorldbuildingOutputSchema>;
 export type PlotOutput = z.infer<typeof PlotOutputSchema>;
 export type ChapterOutlineOutput = z.infer<typeof ChapterOutlineOutputSchema>;
 export type DraftingOutput = z.infer<typeof DraftingOutputSchema>;
+export type PlanRevisionOutput = z.infer<typeof PlanRevisionOutputSchema>;
 export type EditorOutput = z.infer<typeof EditorOutputSchema>;
 export type ContinuityOutput = z.infer<typeof ContinuityOutputSchema>;
 export type PublisherOutput = z.infer<typeof PublisherOutputSchema>;

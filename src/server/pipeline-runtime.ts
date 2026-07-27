@@ -1,9 +1,12 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { renderArtifacts } from "../core/pipeline/artifacts.js";
+import { approvalOutline, renderArtifacts } from "../core/pipeline/artifacts.js";
 import type { PipelineRuntime } from "../core/pipeline/execute.js";
-import { PipelineProjectStateSchema } from "../core/pipeline/project-state.js";
+import {
+  PipelineProjectStateSchema,
+  type PipelineProjectState,
+} from "../core/pipeline/project-state.js";
 import {
   listProjects,
   readProjectState,
@@ -17,7 +20,29 @@ export function createPipelineRuntime(root: string): PipelineRuntime {
       await Promise.all(Object.entries(renderArtifacts(state)).map(([name, contents]) =>
         writeFile(join(root, state.id, name), contents, "utf8")));
     },
+    writeApprovalArtifact: (state) =>
+      writeFile(
+        join(root, state.id, "chapter-outline.json"),
+        `${JSON.stringify(approvalOutline(state), null, 2)}\n`,
+        "utf8",
+      ),
   };
+}
+
+export async function readApprovalArtifact(root: string, id: string): Promise<unknown> {
+  return JSON.parse(await readFile(join(root, id, "chapter-outline.json"), "utf8"));
+}
+
+export async function writeApprovalArtifact(
+  root: string,
+  state: PipelineProjectState,
+  outline: unknown,
+): Promise<void> {
+  await writeFile(
+    join(root, state.id, "chapter-outline.json"),
+    `${JSON.stringify(outline, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 export async function reconcileOrphanedRuns(root: string): Promise<void> {
@@ -32,15 +57,36 @@ export async function reconcileOrphanedRuns(root: string): Promise<void> {
     try {
       const state = await readProjectState(root, id);
       if (!state?.agents.some(({ status }) => status === "running")) continue;
-      const summary = "サーバー再起動時にこの役は実行中のまま中断されました。再開で続行できます。";
+      const attempt = {
+        type: "cancellation" as const,
+        operation: "resume" as const,
+        attemptedAt: new Date().toISOString(),
+      };
       await writeProjectState(root, PipelineProjectStateSchema.parse({
         ...state,
         meta: { ...state.meta, updatedAt: new Date().toISOString() },
         agents: state.agents.map((agent) => agent.status === "running"
-          ? { ...agent, status: "failed" as const, error: summary }
+          ? {
+              ...agent,
+              status: "pending" as const,
+              startedAt: undefined,
+              completedAt: undefined,
+              error: undefined,
+              attempts: [...(agent.attempts ?? []), attempt],
+            }
           : agent),
         chapterRuns: state.chapterRuns.map((chapter) => chapter.status === "generating"
-          ? { ...chapter, status: "failed" as const, error: summary }
+          ? {
+              ...chapter,
+              status: "pending" as const,
+              error: undefined,
+              // Mirrors cancelRunning(): a draft already produced (mid auto-expand/
+              // expand/revise) must not silently finalize into the manuscript at its
+              // pre-expansion length after an orphaned-run restart.
+              needsExpansion: state.bible.chapters.find(({ number }) =>
+                number === chapter.chapterNumber)?.draft ? true : chapter.needsExpansion,
+              attempts: [...(chapter.attempts ?? []), attempt],
+            }
           : chapter),
       }));
     } catch (error) {

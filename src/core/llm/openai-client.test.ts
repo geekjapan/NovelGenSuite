@@ -6,9 +6,11 @@ import { canonicalOutputs } from "../../../test/fixtures/canonical-story.js";
 import { executePipeline, type PipelineRuntime } from "../pipeline/execute.js";
 import { generateMock } from "../pipeline/mock-llm.js";
 import { initializePipelineState } from "../pipeline/project-state.js";
+import { agentDefinitions } from "../registry/agent-registry.js";
 import {
   createGenerateFromEnv,
   createOpenAIGenerate,
+  LlmError,
   sanitizeErrorMessage,
 } from "./openai-client.js";
 
@@ -46,7 +48,6 @@ const close = (server: Server) => new Promise<void>((resolve, reject) =>
 test("fake OpenAI server completes the pipeline after compact fenced-JSON recovery", async () => {
   const requests: Array<{ authorization?: string; body: any }> = [];
   let conceptAttempts = 0;
-  let draftIndex = 0;
   const { server, baseUrl } = await listen((request, response) => {
     let raw = "";
     request.setEncoding("utf8");
@@ -56,7 +57,10 @@ test("fake OpenAI server completes the pipeline after compact fenced-JSON recove
       requests.push({ authorization: request.headers.authorization, body });
       const user = body.messages[1].content as string;
       const id = /ROLE=([^\n]+)/.exec(user)?.[1] as keyof typeof canonicalOutputs;
-      let output = id === "drafting" ? canonicalOutputs.drafting[draftIndex++] : canonicalOutputs[id];
+      const chapterNumber = Number(/"targetChapter":\{"number":(\d+)/.exec(user)?.[1] ?? 1);
+      const output = id === "drafting"
+        ? canonicalOutputs.drafting[chapterNumber - 1]
+        : canonicalOutputs[id];
       let content = JSON.stringify(output);
       if (id === "concept" && conceptAttempts++ === 0) content = '{"logline":"broken"';
       else if (id === "concept") content = `\`\`\`json\n${content}\n\`\`\``;
@@ -98,7 +102,7 @@ for (const status of [401, 402] as const) {
       );
       assert.equal(requests, 1);
       assert.equal(failed.agents[0]!.status, "failed");
-      assert.equal(failed.agents[0]!.error, "Agent execution failed");
+      assert.match(failed.agents[0]!.error!, /ください/);
       assert.doesNotMatch(JSON.stringify(failed), /test-secret|provider-secret|\/Users\/private/);
     } finally {
       await close(server);
@@ -120,6 +124,33 @@ test("AbortError is not compact-retried", async () => {
   const failed = await executePipeline(initial(), runtime(), generate);
   assert.equal(calls, 1);
   assert.equal(failed.agents[0]!.status, "failed");
+});
+
+test("the OpenAI boundary classifies wall-clock timeout separately from abort", async () => {
+  const generate = createOpenAIGenerate({
+    baseUrl: "http://127.0.0.1:1/v1",
+    apiKey: "test-secret",
+    model: "test-model",
+    fetch: async () => {
+      throw new DOMException("timed out", "TimeoutError");
+    },
+  });
+  const project = initial();
+  const definition = agentDefinitions[0];
+  await assert.rejects(
+    generate({
+      agentId: definition.id,
+      context: definition.buildContext({
+        prompt: project.prompt,
+        language: project.language,
+        bible: project.bible,
+        completedOutputs: project.completedOutputs,
+      }),
+      chapterCount: project.configuration.chapterCount,
+      compact: false,
+    }),
+    (cause) => cause instanceof LlmError && cause.kind === "timeout" && cause.retryable,
+  );
 });
 
 test("environment selection keeps mock fallback and requires an explicit model", () => {
@@ -144,7 +175,7 @@ test("missing model is persisted as the first agent failure on the default pipel
     });
 
     assert.equal(failed.agents[0]!.status, "failed");
-    assert.equal(failed.agents[0]!.error, "Agent execution failed");
+    assert.match(failed.agents[0]!.error!, /ください/);
     assert.deepEqual(saved.map(({ agents }) => agents[0]!.status), ["running", "failed"]);
   } finally {
     if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
@@ -156,10 +187,12 @@ test("missing model is persisted as the first agent failure on the default pipel
 
 test("provider error summaries redact credentials, tokens, hashes, and internal paths", () => {
   const message = sanitizeErrorMessage(
-    "Bearer token_abc sk-live-secret file=/Users/geek/private.ts at (/opt/app/client.ts:1:2) C:\\Users\\geek\\private.ts abcdef0123456789abcdef0123456789",
+    "Bearer token_abc API key: plain-secret access token: jwt-secret sk-live-secret file=/Users/geek/private.ts at (/opt/app/client.ts:1:2) C:\\Users\\geek\\private.ts abcdef0123456789abcdef0123456789",
   );
   assert.equal(message.includes("token_abc"), false);
   assert.equal(message.includes("sk-live-secret"), false);
+  assert.equal(message.includes("plain-secret"), false);
+  assert.equal(message.includes("jwt-secret"), false);
   assert.equal(message.includes("/Users/geek"), false);
   assert.equal(message.includes("/opt/app"), false);
   assert.equal(message.includes("C:\\Users\\geek"), false);

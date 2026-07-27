@@ -62,3 +62,26 @@ test("drafting chapter two receives compressed outline and prior chapter bridge"
     canonicalOutputs.drafting[0]!.draft.slice(-300),
   );
 });
+
+test("finishing contexts use their agent-specific compression strategies", () => {
+  const manuscript = `${"a".repeat(4_000)}${"m".repeat(4_000)}${"z".repeat(4_000)}`;
+  const input = {
+    prompt: "依頼",
+    language: "ja" as const,
+    bible: canonicalBible,
+    completedOutputs: {},
+    manuscript,
+  };
+  const editor = definition("editor").buildContext(input);
+  const continuity = definition("continuity").buildContext(input);
+  const publisher = definition("publisher").buildContext(input);
+
+  assert.equal(editor.manuscript?.length, 8_006);
+  assert.match(continuity.manuscript!, /m/);
+  assert.equal(continuity.chapterSummaries?.length, 2);
+  assert.equal(continuity.foreshadowingTracker?.length, 1);
+  assert.equal(publisher.manuscript?.length, 2_000);
+  assert.equal(publisher.title, canonicalBible.publisherPackage?.promotedTitle);
+  assert.equal(publisher.shortSynopsis, canonicalBible.publisherPackage?.shortSynopsis);
+  assert.equal(publisher.worldbuilding, undefined);
+});

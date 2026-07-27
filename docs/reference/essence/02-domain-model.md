@@ -37,8 +37,8 @@ AI が構成を再生成しても、**ユーザーが設定した章長計画と
 
 ## 状態の語彙
 
-- エージェント状態: `pending / running / completed / failed` の4値。キャンセルは状態値ではなく操作(abort)として扱う。
-- 章ドラフト状態: `pending / generating / completed / failed / edited`(+長さ判定 `under / near / over / too-short`)。`edited` は人手編集済みの印で、再生成スキップの根拠になる。
+- エージェント状態: `pending / running / completed / failed` の4値。キャンセルは状態値ではなく操作(abort)として扱い、停止された running エージェントは pending に戻す。
+- 章ドラフト状態: `pending / generating / completed / failed / edited`(+長さ判定 `under / near / over / too-short`)。停止された generating 章は pending に戻し、typed cancellation attempt metadata を保存する。`cancelled` 状態や failed への変更、自動再試行は行わない。`edited` は人手編集済みの印で、再生成スキップの根拠になる。**判断: キャンセル表現は原典記録のままにせず、essence をこの語彙へ統一する。**
 - エージェント状態と章ドラフト状態と画面段階は**3つの独立した軸**。混ぜない。
 
 ## 更新の不変条件
@@ -49,7 +49,7 @@ AI が構成を再生成しても、**ユーザーが設定した章長計画と
 4. **派生値は毎回再計算**: 画面用の派生状態(計画要素一覧、章ドラフト一覧、段階の推定)は保存値を信用せず、Bible から都度導出する(hydration)。古いデータの後方互換もこの導出で吸収する。
 5. **patch の意味論**: `null` は明示的な削除、`undefined` は既存値の維持。この区別を全マージで守る。
 6. **リセットは下流のみ**: エージェント N からのリセットは N 以降の状態・成果物だけを消し、上流の成果物は保持する。章構成以下をリセットしたら承認フラグも必ず倒す。執筆のリセットは章の draft / 要約 / 連続性メモだけを消し、構成・題名・長さ計画は残す。
-7. **completed でも再生成対象になりうる**: draft があっても too-short / needsExpansion の章は再生成候補に含める。「成功レスポンス=十分な本文」と同一視しない。
+7. **再生成は操作を区別する**: failed / 期待長の75%以上85%未満 / needsExpansion の章は、自動生成の候補にせず、明示的な retry / regenerate でのみ対象にする。「成功レスポンス=十分な本文」と同一視しない。
 
 ## 出力正規化(境界での防御)
 

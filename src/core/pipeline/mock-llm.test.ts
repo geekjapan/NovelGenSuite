@@ -5,7 +5,7 @@ import { canonicalOutputs } from "../../../test/fixtures/canonical-story.js";
 import { generateMock } from "./mock-llm.js";
 
 const request = {
-  context: { prompt: "物語" },
+  context: { language: "ja" as const, prompt: "物語" },
   compact: false,
 };
 

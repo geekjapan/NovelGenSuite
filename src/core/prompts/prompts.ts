@@ -3,11 +3,13 @@ import type { GenerateRequest } from "../pipeline/mock-llm.js";
 
 export const promptAgentIds = agentDefinitions.map(({ id }) => id);
 
-const system = [
+const system = (request: GenerateRequest) => [
   "Return valid JSON only.",
   "Do not use markdown, code fences, explanations, or comments.",
   "Close every quote and bracket.",
-  "All JSON keys must be English. All creative text values must be Japanese.",
+  `All JSON keys must be English. All creative text values must be ${
+    request.context.language === "ja" ? "Japanese" : "English"
+  }.`,
 ].join(" ");
 
 const instructions: Record<AgentId, string> = {
@@ -38,13 +40,39 @@ const compactContext = (request: GenerateRequest) => {
     : serialized;
 };
 
+const draftingLengthGuidance = (request: GenerateRequest) => {
+  if (request.agentId !== "drafting") return "";
+  const plan = request.context.targetChapter?.lengthPlan;
+  return plan
+    ? `LENGTH GUIDANCE: minimum=${Math.ceil(plan.target * 0.9)} ${plan.unit}; preferredMaximum=${Math.floor(plan.target * 1.2)} ${plan.unit}.`
+    : "";
+};
+
+const operationInstruction = (request: GenerateRequest) => {
+  if (request.operation === "expand") {
+    return "章を拡張する。現在長と目標長を確認し、前提を変えず要約せず、場面・会話・感覚描写・内的葛藤・転換を追加して連続性を維持する。draft, expansionSummary だけを返す。";
+  }
+  if (request.operation === "revise") {
+    return "対象章を改稿する。chapterNumber, draft, chapterSummary だけを返す。";
+  }
+  if (request.operation === "plan-revise") {
+    return "計画を改稿する。変更キーだけの patch, explanation, structureChanged を返す。構造変更が必要な場合以外は patch に parts を含めない。";
+  }
+  return instructions[request.agentId];
+};
+
 export function buildPrompt(request: GenerateRequest) {
   return {
-    system,
+    system: system(request),
     user: [
       `ROLE=${request.agentId}`,
       request.compact ? "COMPACT RETRY: 最小限の短いJSONで契約を満たす。" : "",
-      instructions[request.agentId],
+      operationInstruction(request),
+      request.operation === "auto-expand"
+        ? "AUTO EXPAND: CONTEXT.currentDraft を保持して不足する描写を加え、章全体を返す。"
+        : "",
+      request.instruction ? `USER INSTRUCTION=${request.instruction}` : "",
+      draftingLengthGuidance(request),
       request.agentId === "chapter-outline"
         ? `SKELETON=${JSON.stringify(request.context.chapterSkeleton)}`
         : "",

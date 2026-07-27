@@ -32,6 +32,8 @@ textarea:focus, input:focus { border-color: #4c750e; box-shadow: 0 2px #4c750e; 
 .primary { width: 100%; display: flex; justify-content: space-between; align-items: center; color: #11130e; background: #b7f75a; border: 0; padding: 18px 20px; font-weight: 800; cursor: pointer; }
 .primary:hover { background: #caff7d; }
 .primary:disabled { opacity: .55; cursor: wait; }
+.check { display: grid; grid-template-columns: 18px 1fr; align-items: center; margin: -14px 0 28px; }
+.check input { width: 18px; }
 .error { padding: 12px 14px; border-left: 3px solid #ff765f; background: #401d17; color: #ffd4cc; }
 .create-panel .error { color: #8e1b0e; background: #ffdcd5; }
 .projects { margin-top: 100px; }
@@ -50,6 +52,19 @@ textarea:focus, input:focus { border-color: #4c750e; box-shadow: 0 2px #4c750e; 
 .failure h2 { margin-bottom: 20px; }
 .failure .primary { width: min(320px, 100%); margin-top: 24px; }
 .progress-panel, .outputs { margin-top: 70px; }
+.stages { display: grid; grid-template-columns: repeat(5, 1fr); margin: 36px 0; }
+.stages button, .chapter-actions button { border: 1px solid #4a4e47; color: #c8cbc4; background: transparent; padding: 12px; cursor: pointer; }
+.stages button.current { color: #11130e; background: #b7f75a; border-color: #b7f75a; }
+.stages button:disabled, .chapter-actions button:disabled { opacity: .35; cursor: not-allowed; }
+.danger { color: #ffd4cc; background: #401d17; border: 1px solid #8d392c; padding: 12px 18px; cursor: pointer; }
+.approval-panel { margin: 40px 0; }
+.approval-panel fieldset { border: 1px solid #b1b3ac; margin: 24px 0; padding: 18px; }
+.approval-panel .field-row { grid-template-columns: repeat(3, 1fr); margin-bottom: 8px; }
+.chapter-actions { margin-top: 70px; }
+.plan-revise { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; margin-bottom: 18px; }
+.plan-revise button { min-width: 140px; }
+.chapter-actions article { display: flex; justify-content: space-between; gap: 20px; padding: 18px 0; border-top: 1px solid #363933; }
+.chapter-actions article div { display: flex; gap: 8px; }
 .agent-list { list-style: none; padding: 0; margin: 0; border-top: 1px solid #363933; }
 .agent { display: grid; grid-template-columns: 42px 14px 1fr 90px 70px; gap: 14px; align-items: center; min-height: 64px; border-bottom: 1px solid #363933; }
 .agent-index, .status-name, .agent time { color: #858b81; font-size: 12px; }

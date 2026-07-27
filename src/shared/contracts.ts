@@ -1,9 +1,13 @@
 import { z } from "zod";
 
 import {
+  ChapterSchema,
   ContinuityOutputSchema,
   EditorOutputSchema,
+  ForeshadowingTrackerItemSchema,
+  PartSchema,
   PublisherOutputSchema,
+  StyleGuideSchema,
 } from "./agent-schemas.js";
 
 export const DEFAULT_CONFIGURATION = {
@@ -19,6 +23,15 @@ export const ConfigurationSchema = z.object({
 });
 export type Configuration = z.infer<typeof ConfigurationSchema>;
 
+export const WorkflowStageSchema = z.enum([
+  "launcher",
+  "planning",
+  "approval",
+  "drafting",
+  "final",
+]);
+export type WorkflowStage = z.infer<typeof WorkflowStageSchema>;
+
 export const languagePolicies = {
   ja: {
     locale: "ja-JP",
@@ -26,17 +39,55 @@ export const languagePolicies = {
     promptHeadCharacters: 600,
     promptTailCharacters: 300,
     previousChapterTailCharacters: 300,
+    chapterLengthWarningThreshold: 8_000,
     omissionMarker: "…省略…",
     excerptMarker: "…抜粋…",
   },
+  en: {
+    locale: "en-US",
+    lengthUnit: "words",
+    promptHeadCharacters: 600,
+    promptTailCharacters: 300,
+    previousChapterTailCharacters: 600,
+    chapterLengthWarningThreshold: 3_000,
+    omissionMarker: "…omitted…",
+    excerptMarker: "…excerpt…",
+  },
 } as const;
 
-export const SupportedLanguageSchema = z.enum(["ja"]);
+export const SupportedLanguageSchema = z.enum(["ja", "en"]);
 export type SupportedLanguage = z.infer<typeof SupportedLanguageSchema>;
 
 export function findLanguagePolicy(language: string) {
   const result = SupportedLanguageSchema.safeParse(language);
   return result.success ? languagePolicies[result.data] : undefined;
+}
+
+export const ProjectWarningSchema = z.object({
+  code: z.literal("chapter-length-high"),
+  chapterLength: z.number().int().positive(),
+  threshold: z.number().int().positive(),
+  unit: z.enum(["characters", "words"]),
+  message: z.string(),
+});
+export type ProjectWarning = z.infer<typeof ProjectWarningSchema>;
+
+export function chapterLengthWarnings(
+  language: SupportedLanguage,
+  configuration: Configuration,
+): ProjectWarning[] {
+  const policy = languagePolicies[language];
+  return configuration.chapterLength > policy.chapterLengthWarningThreshold
+    ? [{
+        code: "chapter-length-high",
+        chapterLength: configuration.chapterLength,
+        threshold: policy.chapterLengthWarningThreshold,
+        unit: policy.lengthUnit,
+        message: language === "ja"
+          ? `一章の長さが推奨上限 ${policy.chapterLengthWarningThreshold} ${policy.lengthUnit} を超えています。`
+          : `Chapter length exceeds the recommended maximum of ${policy.chapterLengthWarningThreshold} ${policy.lengthUnit}.`,
+      }]
+    : [];
 }
 
 export const CreateProjectRequestSchema = z.object({
@@ -51,6 +102,7 @@ export const ProjectStateSchema = z.object({
   prompt: z.string().min(1),
   language: SupportedLanguageSchema,
   configuration: ConfigurationSchema,
+  warnings: z.array(ProjectWarningSchema).default([]),
   meta: z.object({
     schemaVersion: z.literal(1),
     createdAt: z.iso.datetime(),
@@ -62,20 +114,43 @@ export type ProjectState = z.infer<typeof ProjectStateSchema>;
 export const WebProjectStateSchema = ProjectStateSchema.pick({
   id: true,
   prompt: true,
+  configuration: true,
   meta: true,
+  warnings: true,
 }).extend({
+  workflow: z.object({
+    stage: WorkflowStageSchema,
+    reached: z.array(WorkflowStageSchema),
+    awaitingApproval: z.boolean(),
+    approvedAt: z.iso.datetime().optional(),
+  }),
   agents: z.array(z.object({
     id: z.string(),
     status: z.enum(["pending", "running", "completed", "failed"]),
     startedAt: z.iso.datetime().optional(),
     completedAt: z.iso.datetime().optional(),
     error: z.string().optional(),
+    attemptCount: z.number().int().nonnegative().optional(),
+    maxAttempts: z.number().int().positive().optional(),
+    lastRetryError: z.string().optional(),
+    fallbackUsed: z.boolean().optional(),
+    autoRecovered: z.boolean().optional(),
   })),
   chapterRuns: z.array(z.object({
+    chapterNumber: z.number().int().positive(),
     status: z.enum(["pending", "generating", "completed", "failed", "edited"]),
+    attemptCount: z.number().int().nonnegative().optional(),
+    maxAttempts: z.number().int().positive().optional(),
+    lastRetryError: z.string().optional(),
+    fallbackUsed: z.boolean().optional(),
+    autoRecovered: z.boolean().optional(),
   })),
   manuscript: z.string().nullable(),
   bible: z.object({
+    parts: z.array(PartSchema),
+    chapters: z.array(ChapterSchema),
+    styleGuide: StyleGuideSchema.nullable(),
+    foreshadowingTracker: z.array(ForeshadowingTrackerItemSchema),
     editorReport: EditorOutputSchema.nullable(),
     continuityReport: ContinuityOutputSchema.nullable(),
     publisherPackage: PublisherOutputSchema.nullable(),
@@ -96,6 +171,7 @@ export const ErrorCodeSchema = z.enum([
   "validation-error",
   "project-not-found",
   "run-conflict",
+  "invalid-transition",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 

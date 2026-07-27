@@ -6,7 +6,7 @@ import {
   mergeAgentOutput,
 } from "./agent-registry.js";
 import { ChapterOutlineOutputSchema } from "../../shared/agent-schemas.js";
-import { emptyStoryBible } from "../../shared/story-bible.js";
+import { emptyStoryBible, type StoryBible } from "../../shared/story-bible.js";
 import { StoryBibleSchema } from "../../shared/story-bible.js";
 import {
   canonicalBible,
@@ -36,6 +36,21 @@ test("agent registry is the single ordered definition of all nine roles", () => 
     for (const output of outputs) definition.schema.parse(output);
   }
   StoryBibleSchema.parse(canonicalBible);
+});
+
+test("continuity advances foreshadowing through planned, unresolved, and paid-off", () => {
+  let bible: StoryBible = {
+    ...canonicalBible,
+    foreshadowingTracker: [{
+      ...canonicalBible.foreshadowingTracker[0]!,
+      status: "planned" as const,
+    }],
+  };
+  bible = mergeAgentOutput(bible, "continuity", canonicalOutputs.continuity);
+  assert.equal(bible.foreshadowingTracker[0]?.status, "unresolved");
+
+  bible = mergeAgentOutput(bible, "continuity", canonicalOutputs.continuity);
+  assert.equal(bible.foreshadowingTracker[0]?.status, "paid-off");
 });
 
 test("chapter outline merge preserves skeleton fields and a user title", () => {
@@ -100,6 +115,18 @@ test("chapter outline schema rejects duplicate chapter numbers", () => {
       }],
     }],
   }).success, false);
+});
+
+test("chapter outline schema rejects duplicate part numbers", () => {
+  const definition = agentDefinitions.find(({ id }) => id === "chapter-outline");
+  assert.ok(definition);
+  const outline = canonicalOutputs["chapter-outline"];
+  const result = definition.schema.safeParse({
+    ...outline,
+    parts: [outline.parts[0]!, outline.parts[0]!],
+  });
+  assert.equal(result.success, false);
+  assert.ok(result.error?.issues.some(({ message }) => message === "part numbers must be unique"));
 });
 
 test("chapter outline schema normalizes creative arrays to contract limits", () => {
