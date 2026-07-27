@@ -49,7 +49,7 @@ test("web response schemas validate and project persisted state", () => {
   ]);
   assert.deepEqual(project.warnings, []);
   assert.deepEqual(project.agents, [{ id: "concept", status: "completed" }]);
-  assert.deepEqual(project.chapterRuns, [{ status: "completed" }]);
+  assert.deepEqual(project.chapterRuns, [{ chapterNumber: 1, status: "completed" }]);
   assert.deepEqual(ProjectListResponseSchema.parse([{ id: project.id, createdAt }]), [{ id: "project-1", createdAt }]);
   assert.equal(WebProjectStateSchema.safeParse({ ...project, agents: [{ id: "concept", status: "unknown" }] }).success, false);
 });

@@ -72,6 +72,8 @@ test("承認ゲートと expand/revise 操作へ GUI から到達できる", asy
   await page.getByRole("button", { name: "計画を改稿" }).click();
   await planRevised;
   await expect(page.getByRole("heading", { name: "章構成を確認" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "章を拡張" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "章を改稿" })).toHaveCount(0);
   await page.getByRole("button", { name: "章構成を承認して再開" }).click();
   await expect(page.getByRole("heading", { name: "完成した小説" })).toBeVisible();
 });

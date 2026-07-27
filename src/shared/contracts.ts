@@ -83,7 +83,9 @@ export function chapterLengthWarnings(
         chapterLength: configuration.chapterLength,
         threshold: policy.chapterLengthWarningThreshold,
         unit: policy.lengthUnit,
-        message: `一章の長さが推奨上限 ${policy.chapterLengthWarningThreshold} ${policy.lengthUnit} を超えています。`,
+        message: language === "ja"
+          ? `一章の長さが推奨上限 ${policy.chapterLengthWarningThreshold} ${policy.lengthUnit} を超えています。`
+          : `Chapter length exceeds the recommended maximum of ${policy.chapterLengthWarningThreshold} ${policy.lengthUnit}.`,
       }]
     : [];
 }
@@ -135,6 +137,7 @@ export const WebProjectStateSchema = ProjectStateSchema.pick({
     autoRecovered: z.boolean().optional(),
   })),
   chapterRuns: z.array(z.object({
+    chapterNumber: z.number().int().positive(),
     status: z.enum(["pending", "generating", "completed", "failed", "edited"]),
     attemptCount: z.number().int().nonnegative().optional(),
     maxAttempts: z.number().int().positive().optional(),

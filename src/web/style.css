@@ -32,7 +32,7 @@ textarea:focus, input:focus { border-color: #4c750e; box-shadow: 0 2px #4c750e; 
 .primary { width: 100%; display: flex; justify-content: space-between; align-items: center; color: #11130e; background: #b7f75a; border: 0; padding: 18px 20px; font-weight: 800; cursor: pointer; }
 .primary:hover { background: #caff7d; }
 .primary:disabled { opacity: .55; cursor: wait; }
-.check { display: flex; grid-template-columns: 18px 1fr; align-items: center; margin: -14px 0 28px; }
+.check { display: grid; grid-template-columns: 18px 1fr; align-items: center; margin: -14px 0 28px; }
 .check input { width: 18px; }
 .error { padding: 12px 14px; border-left: 3px solid #ff765f; background: #401d17; color: #ffd4cc; }
 .create-panel .error { color: #8e1b0e; background: #ffdcd5; }

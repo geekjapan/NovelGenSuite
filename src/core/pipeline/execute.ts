@@ -85,7 +85,14 @@ const chapterExecutionError = (
   chapterNumber: number,
   operation: "generate" | "retry" | "regenerate" | "expand" | "revise" | "auto-expand",
 ) => cause instanceof LlmError && cause.kind === "timeout"
-  ? `第${chapterNumber}章の${operation === "auto-expand" ? "自動拡張" : "生成"}がタイムアウトしました。章長を減らすか、モデルを変更してください。`
+  ? `第${chapterNumber}章の${{
+      generate: "生成",
+      retry: "再試行",
+      regenerate: "再生成",
+      expand: "拡張",
+      revise: "改稿",
+      "auto-expand": "自動拡張",
+    }[operation]}がタイムアウトしました。章長を減らすか、モデルを変更してください。`
   : operation === "auto-expand" ? `${EXPANSION_ERROR}: ${actionableError(cause)}` : actionableError(cause);
 
 const changed = (state: PipelineProjectState): PipelineProjectState => ({
@@ -202,15 +209,13 @@ async function clientRetry(
         attempts: attempt,
         lastError: attempt > 1 ? sanitizeErrorMessage(lastError) : undefined,
       };
-    } catch (cause) {
-      if (
-        cause instanceof Error
-        && cause.name === "AbortError"
+    } catch (caught) {
+      const cause = caught instanceof Error
+        && caught.name === "AbortError"
         && attemptSignal.reason instanceof Error
         && attemptSignal.reason.name === "TimeoutError"
-      ) {
-        cause = new LlmError("LLM call timed out", true, "timeout");
-      }
+        ? new LlmError("LLM call timed out", true, "timeout")
+        : caught;
       lastError = cause;
       if (classifyRecovery(cause) === "abort" || !shouldClientRetry(cause) || attempt === MAX_CLIENT_ATTEMPTS) {
         throw new ProviderRequestError(cause, attempt, sanitizeErrorMessage(lastError));
@@ -923,59 +928,69 @@ export async function revisePlan(
     }));
     return working;
   }
-  working = setAgent(working, "chapter-outline", {
-    ...result.recovery,
-    status: "completed",
-    completedAt: new Date().toISOString(),
-    error: undefined,
-  });
-  const revision = result.output as PlanRevisionOutput;
-  const current = approvalOutline(working);
-  const protectedBible = mergeAgentOutput(working.bible, "chapter-outline", {
-    ...current,
-    ...revision.patch,
-  });
-  let next = approveChapterOutline(working, approvalOutline({
-    ...working,
-    bible: protectedBible,
-  }));
-  if (revision.structureChanged) {
-    const mark = <T extends { needsRevision?: boolean }>(chapter: T): T => ({
-      ...chapter,
-      needsRevision: true,
+  try {
+    working = setAgent(working, "chapter-outline", {
+      ...result.recovery,
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      error: undefined,
     });
+    const revision = result.output as PlanRevisionOutput;
+    const current = approvalOutline(working);
+    const protectedBible = mergeAgentOutput(working.bible, "chapter-outline", {
+      ...current,
+      ...revision.patch,
+    });
+    let next = approveChapterOutline(working, approvalOutline({
+      ...working,
+      bible: protectedBible,
+    }));
+    if (revision.structureChanged) {
+      const mark = <T extends { needsRevision?: boolean }>(chapter: T): T => ({
+        ...chapter,
+        needsRevision: true,
+      });
+      next = {
+        ...next,
+        bible: {
+          ...next.bible,
+          parts: next.bible.parts.map((part) => ({
+            ...part,
+            chapters: part.chapters.map(mark),
+          })),
+          chapters: next.bible.chapters.map(mark),
+        },
+      };
+    }
     next = {
       ...next,
-      bible: {
-        ...next.bible,
-        parts: next.bible.parts.map((part) => ({
-          ...part,
-          chapters: part.chapters.map(mark),
-        })),
-        chapters: next.bible.chapters.map(mark),
+      completedOutputs: {
+        ...next.completedOutputs,
+        "plan-revise": [
+          ...((next.completedOutputs["plan-revise"] as PlanRevisionOutput[] | undefined) ?? []),
+          revision,
+        ],
       },
     };
+    if (working.configuration.requireApproval) {
+      next = {
+        ...setWorkflowStage(next, "approval"),
+        workflow: {
+          ...setWorkflowStage(next, "approval").workflow,
+          awaitingApproval: true,
+          approvedAt: undefined,
+        },
+      };
+    }
+    await runtime.writeApprovalArtifact?.(next);
+    return save(runtime, next);
+  } catch (cause) {
+    return save(runtime, setAgent(working, "chapter-outline", {
+      ...result.recovery,
+      status: "failed",
+      completedAt: undefined,
+      error: `章構成の更新内容を確認して、もう一度改稿してください。 (${sanitizeErrorMessage(cause)})`,
+      lastRetryError: sanitizeErrorMessage(cause),
+    }));
   }
-  next = {
-    ...next,
-    completedOutputs: {
-      ...next.completedOutputs,
-      "plan-revise": [
-        ...((next.completedOutputs["plan-revise"] as PlanRevisionOutput[] | undefined) ?? []),
-        revision,
-      ],
-    },
-  };
-  if (working.configuration.requireApproval) {
-    next = {
-      ...setWorkflowStage(next, "approval"),
-      workflow: {
-        ...setWorkflowStage(next, "approval").workflow,
-        awaitingApproval: true,
-        approvedAt: undefined,
-      },
-    };
-  }
-  await runtime.writeApprovalArtifact?.(next);
-  return save(runtime, next);
 }

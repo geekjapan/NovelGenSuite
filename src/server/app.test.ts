@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -320,6 +320,24 @@ test("approval gate stops cleanly, writes an editable outline, and resumes after
   assert.equal(revisedPlan.workflow.awaitingApproval, true);
 });
 
+test("approval maps missing and corrupt outline artifacts to validation errors", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const app = createApp({ projectsRoot: root });
+  const created = await project(app, { chapterCount: 1, requireApproval: true });
+  await app.request(`/projects/${created.id}/run`, { method: "POST" });
+  const artifact = join(root, created.id, "chapter-outline.json");
+
+  await unlink(artifact);
+  const missing = await app.request(`/projects/${created.id}/approve`, { method: "POST" });
+  assert.equal(missing.status, 400);
+  assert.equal((await missing.json()).error.code, "validation-error");
+
+  await writeFile(artifact, "{", "utf8");
+  const corrupt = await app.request(`/projects/${created.id}/approve`, { method: "POST" });
+  assert.equal(corrupt.status, 400);
+  assert.equal((await corrupt.json()).error.code, "validation-error");
+});
+
 test("stage navigation requires confirmation for backtracking and rejects unreached jumps", async () => {
   const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
   const app = createApp({ projectsRoot: root });
@@ -520,6 +538,110 @@ test("malformed auxiliary output is recorded instead of replaced by a generic fa
   assert.ok(outline.lastRetryError);
 });
 
+test("a malformed plan patch is persisted as failed instead of leaving the agent running", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  let parts: PipelineProjectState["bible"]["parts"] = [];
+  const generate: Generate = async (request) => request.operation === "plan-revise"
+    ? JSON.stringify({
+        patch: {
+          parts: [{
+            ...parts[0],
+            chapters: parts[0]!.chapters.map((chapter) => ({
+              ...chapter,
+              number: 1,
+            })),
+          }],
+        },
+        explanation: "不正な重複番号",
+        structureChanged: true,
+      })
+    : generateMock(request);
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app, { chapterCount: 2, chapterLength: 100 });
+  const completed = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+  })).json();
+  parts = completed.bible.parts;
+  await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "planning", confirmed: true }),
+  });
+
+  const response = await app.request(`/projects/${created.id}/plan/revise`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ instruction: "章構成を変更" }),
+  });
+  assert.equal(response.status, 200);
+  const revised = await response.json();
+  const outline = revised.agents.find(({ id }: PipelineProjectState["agents"][number]) =>
+    id === "chapter-outline");
+  assert.equal(outline.status, "failed");
+  assert.match(outline.error, /章構成の更新内容/);
+  const persisted = (await readProjectState(root, created.id))!;
+  assert.equal(persisted.agents.find(({ id }) => id === "chapter-outline")?.status, "failed");
+});
+
+test("simultaneous run requests claim the project before state reads", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  let release!: () => void;
+  let started!: () => void;
+  const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+  const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+  const generate: Generate = async (request) => {
+    if (request.agentId === "concept") {
+      started();
+      await releasePromise;
+    }
+    return generateMock(request);
+  };
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app);
+
+  const first = app.request(`/projects/${created.id}/run`, { method: "POST" });
+  const second = app.request(`/projects/${created.id}/run`, { method: "POST" });
+  await startedPromise;
+  release();
+  const responses = await Promise.all([first, second]);
+  assert.deepEqual(responses.map(({ status }) => status).sort(), [200, 409]);
+});
+
+test("simultaneous plan revisions claim the project before state reads", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  let release!: () => void;
+  let started!: () => void;
+  const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+  const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+  const generate: Generate = async (request) => {
+    if (request.operation === "plan-revise") {
+      started();
+      await releasePromise;
+    }
+    return generateMock(request);
+  };
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app, { chapterCount: 1, chapterLength: 100 });
+  await app.request(`/projects/${created.id}/run`, { method: "POST" });
+  await app.request(`/projects/${created.id}/stage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ stage: "planning", confirmed: true }),
+  });
+  const request = () => app.request(`/projects/${created.id}/plan/revise`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ instruction: "緊張感を高める" }),
+  });
+
+  const first = request();
+  const second = request();
+  await startedPromise;
+  release();
+  const responses = await Promise.all([first, second]);
+  assert.deepEqual(responses.map(({ status }) => status).sort(), [200, 409]);
+});
+
 test("compact retry accepts fenced JSON and duplicate run returns run-conflict", async () => {
   const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
   let release!: () => void;
@@ -649,9 +771,9 @@ test("HTTP API returns stable input and not-found error codes", async () => {
 test("chapter length warning thresholds are non-blocking at Japanese and English boundaries", async () => {
   const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
   const app = createApp({ projectsRoot: root });
-  for (const [language, threshold, unit] of [
-    ["ja", 8_000, "characters"],
-    ["en", 3_000, "words"],
+  for (const [language, threshold, unit, message] of [
+    ["ja", 8_000, "characters", "推奨上限"],
+    ["en", 3_000, "words", "recommended maximum"],
   ] as const) {
     for (const [chapterLength, warningCount] of [[threshold, 0], [threshold + 1, 1]] as const) {
       const response = await app.request("/projects", {
@@ -670,6 +792,7 @@ test("chapter length warning thresholds are non-blocking at Japanese and English
         assert.equal(created.warnings[0].code, "chapter-length-high");
         assert.equal(created.warnings[0].threshold, threshold);
         assert.equal(created.warnings[0].unit, unit);
+        assert.match(created.warnings[0].message, new RegExp(message));
       }
     }
   }
@@ -691,6 +814,25 @@ test("draft generation timeout keeps chapter number and actionable advice in the
   assert.match(failed.chapterRuns[0].error, /章長を減らす/);
   assert.match(failed.chapterRuns[0].error, /モデルを変更/);
   assert.equal(failed.agents.find(({ id }: any) => id === "drafting").error, failed.chapterRuns[0].error);
+});
+
+test("chapter operation timeouts name the requested operation", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const generate: Generate = async (request) => {
+    if (request.agentId === "drafting" && request.operation === "expand") {
+      throw new LlmError("OpenAI request timed out", true, "timeout");
+    }
+    return generateMock(request);
+  };
+  const app = createApp({ projectsRoot: root, generate });
+  const created = await project(app, { chapterCount: 1, chapterLength: 100 });
+  await app.request(`/projects/${created.id}/run`, { method: "POST" });
+  const expanded = await (await app.request(`/projects/${created.id}/run`, {
+    method: "POST",
+    body: JSON.stringify({ operation: "expand", chapterNumber: 1 }),
+  })).json();
+
+  assert.match(expanded.chapterRuns[0].error, /第1章の拡張がタイムアウト/);
 });
 
 test("auto-expansion timeout keeps its operation and advice while preserving coverage", async () => {

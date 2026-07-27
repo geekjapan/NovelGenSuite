@@ -124,6 +124,13 @@ export const ChapterOutlineOutputSchema = z.object({
   foreshadowingTracker: list(ForeshadowingTrackerItemSchema, 3),
 }).superRefine(({ parts }, context) => {
   const chapters = parts.flatMap((part) => part.chapters);
+  if (new Set(parts.map(({ number }) => number)).size !== parts.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["parts"],
+      message: "part numbers must be unique",
+    });
+  }
   if (new Set(chapters.map(({ number }) => number)).size !== chapters.length) {
     context.addIssue({
       code: "custom",

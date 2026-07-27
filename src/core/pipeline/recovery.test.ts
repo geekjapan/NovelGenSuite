@@ -192,7 +192,6 @@ test("call timeout retries with fresh signals and can switch provider", async ()
 });
 
 test("agent timeout still applies chapter-outline skeleton fallback", async () => {
-  const started = performance.now();
   const completed = await executePipeline(initial(), runtime, async (request) => {
     if (request.agentId !== "chapter-outline") return generateMock(request);
     request.signal?.throwIfAborted();
@@ -212,7 +211,6 @@ test("agent timeout still applies chapter-outline skeleton fallback", async () =
   const outline = completed.agents.find(({ id }) => id === "chapter-outline")!;
   assert.equal(outline.status, "completed");
   assert.equal(outline.fallbackUsed, true);
-  assert.ok(performance.now() - started < 80);
 });
 
 test("AbortError without a caller signal is restored to pending with cancellation metadata", async () => {

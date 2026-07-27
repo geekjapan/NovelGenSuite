@@ -271,7 +271,7 @@ export const buildContinuityContext = (input: BuildContextInput): AgentContext =
 export const buildPublisherContext = (input: BuildContextInput): AgentContext => ({
   language: input.language,
   prompt: common(input).prompt,
-  title: input.bible.parts[0]?.title,
+  title: input.bible.publisherPackage?.promotedTitle,
   concept: concept(input),
   characters: characters(input),
   plot: plot(input),

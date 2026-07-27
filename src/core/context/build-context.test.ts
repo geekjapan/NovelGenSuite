@@ -81,6 +81,7 @@ test("finishing contexts use their agent-specific compression strategies", () =>
   assert.equal(continuity.chapterSummaries?.length, 2);
   assert.equal(continuity.foreshadowingTracker?.length, 1);
   assert.equal(publisher.manuscript?.length, 2_000);
+  assert.equal(publisher.title, canonicalBible.publisherPackage?.promotedTitle);
   assert.equal(publisher.shortSynopsis, canonicalBible.publisherPackage?.shortSynopsis);
   assert.equal(publisher.worldbuilding, undefined);
 });

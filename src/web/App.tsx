@@ -354,6 +354,7 @@ function ProjectView({ id, runFailed, onRunStarted }: { id: string; runFailed: b
   const startFailed = runFailed && project.agents.every(({ status }) => status === "pending");
   const completed = project.agents.filter(({ status }) => status === "completed").length;
   const finished = completed === project.agents.length;
+  const canAdjustChapters = finished && project.workflow.stage === "final";
   return <main className="page narrow">
     <a className="back" href="#/">← 一覧へ戻る</a>
     <header className="project-header">
@@ -443,14 +444,14 @@ function ProjectView({ id, runFailed, onRunStarted }: { id: string; runFailed: b
           <label>計画の改稿指示<input name="instruction" required placeholder="中盤の緊張感を高める" /></label>
           <button disabled={acting}>計画を改稿</button>
         </form>
-        {project.bible.chapters.filter((chapter) => chapter.draft).map((chapter) =>
+        {canAdjustChapters ? project.bible.chapters.filter((chapter) => chapter.draft).map((chapter) =>
           <article key={chapter.number}>
             <strong>第{chapter.number}章 {chapter.title}</strong>
             <div>
               <button disabled={acting} onClick={() => void chapterAction("expand", chapter.number)}>章を拡張</button>
               <button disabled={acting} onClick={() => void chapterAction("revise", chapter.number)}>章を改稿</button>
             </div>
-          </article>)}
+          </article>) : null}
       </section>
       : null}
 

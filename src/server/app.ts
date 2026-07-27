@@ -189,7 +189,12 @@ export function createApp({
       await writeProjectState(projectsRoot, next);
       return context.json(next);
     } catch (cause) {
-      if (cause instanceof InvalidWorkflowTransitionError || cause instanceof z.ZodError) {
+      if (
+        cause instanceof InvalidWorkflowTransitionError
+        || cause instanceof z.ZodError
+        || cause instanceof SyntaxError
+        || cause instanceof Error && "code" in cause && cause.code === "ENOENT"
+      ) {
         return context.json(error("validation-error", "章構成を確認してください。"), 400);
       }
       throw cause;
@@ -198,26 +203,29 @@ export function createApp({
 
   app.post("/projects/:id/plan/revise", async (context) => {
     const id = context.req.param("id");
-    const state = await readProjectState(projectsRoot, id);
-    if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
-    if (activeRuns.has(id) || state.agents.some(({ status }) => status === "running")) {
+    if (activeRuns.has(id)) {
       return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
-    }
-    if (
-      state.workflow.stage !== "planning"
-      || state.agents.find(({ id: agentId }) => agentId === "chapter-outline")?.status !== "completed"
-    ) {
-      return context.json(error("invalid-transition", "計画段階へ戻ってから改稿してください。"), 409);
-    }
-    const request = PlanRevisionRequestSchema.safeParse(
-      await context.req.json().catch(() => undefined),
-    );
-    if (!request.success) {
-      return context.json(error("validation-error", "改稿指示を入力してください。"), 400);
     }
     const controller = new AbortController();
     activeRuns.set(id, controller);
     try {
+      const state = await readProjectState(projectsRoot, id);
+      if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+      if (state.agents.some(({ status }) => status === "running")) {
+        return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
+      }
+      if (
+        state.workflow.stage !== "planning"
+        || state.agents.find(({ id: agentId }) => agentId === "chapter-outline")?.status !== "completed"
+      ) {
+        return context.json(error("invalid-transition", "計画段階へ戻ってから改稿してください。"), 409);
+      }
+      const request = PlanRevisionRequestSchema.safeParse(
+        await context.req.json().catch(() => undefined),
+      );
+      if (!request.success) {
+        return context.json(error("validation-error", "改稿指示を入力してください。"), 400);
+      }
       return context.json(await revisePlan(
         state,
         pipelineRuntime,
@@ -232,38 +240,38 @@ export function createApp({
 
   app.post("/projects/:id/run", async (context) => {
     const id = context.req.param("id");
-    const state = await readProjectState(projectsRoot, id);
-    if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
     if (activeRuns.has(id)) return context.json(error("run-conflict", "パイプラインは実行中です。"), 409);
-    const raw = await context.req.text();
-    let json: unknown = undefined;
-    try {
-      json = raw ? JSON.parse(raw) : undefined;
-    } catch {
-      return context.json(error("validation-error", "JSON が不正です。"), 400);
-    }
-    const request = RunRequestSchema.safeParse(json);
-    if (!request.success) {
-      return context.json(error("validation-error", "実行操作を確認してください。"), 400);
-    }
-    if (request.data.operation === "rerun-final") {
-      const finalAgentId = request.data.agent;
-      const finalAgent = state.agents.find(({ id: agentId }) =>
-        agentId === finalAgentId);
-      if (
-        state.workflow.stage !== "final"
-        || !hasChapterCoverage(state)
-        || finalAgent?.status !== "completed"
-      ) {
-        return context.json(error(
-          "invalid-transition",
-          "完了済みの仕上げ工程だけを再実行できます。",
-        ), 409);
-      }
-    }
     const controller = new AbortController();
     activeRuns.set(id, controller);
     try {
+      const state = await readProjectState(projectsRoot, id);
+      if (!state) return context.json(error("project-not-found", "プロジェクトが見つかりません。"), 404);
+      const raw = await context.req.text();
+      let json: unknown = undefined;
+      try {
+        json = raw ? JSON.parse(raw) : undefined;
+      } catch {
+        return context.json(error("validation-error", "JSON が不正です。"), 400);
+      }
+      const request = RunRequestSchema.safeParse(json);
+      if (!request.success) {
+        return context.json(error("validation-error", "実行操作を確認してください。"), 400);
+      }
+      if (request.data.operation === "rerun-final") {
+        const finalAgentId = request.data.agent;
+        const finalAgent = state.agents.find(({ id: agentId }) =>
+          agentId === finalAgentId);
+        if (
+          state.workflow.stage !== "final"
+          || !hasChapterCoverage(state)
+          || finalAgent?.status !== "completed"
+        ) {
+          return context.json(error(
+            "invalid-transition",
+            "完了済みの仕上げ工程だけを再実行できます。",
+          ), 409);
+        }
+      }
       return context.json(await executePipeline(state, pipelineRuntime, generate, {
         chapterOperation: request.data.operation === "resume"
           ? { type: "resume" }

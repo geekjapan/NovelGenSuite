@@ -117,6 +117,18 @@ test("chapter outline schema rejects duplicate chapter numbers", () => {
   }).success, false);
 });
 
+test("chapter outline schema rejects duplicate part numbers", () => {
+  const definition = agentDefinitions.find(({ id }) => id === "chapter-outline");
+  assert.ok(definition);
+  const outline = canonicalOutputs["chapter-outline"];
+  const result = definition.schema.safeParse({
+    ...outline,
+    parts: [outline.parts[0]!, outline.parts[0]!],
+  });
+  assert.equal(result.success, false);
+  assert.ok(result.error?.issues.some(({ message }) => message === "part numbers must be unique"));
+});
+
 test("chapter outline schema normalizes creative arrays to contract limits", () => {
   const outline = canonicalOutputs["chapter-outline"];
   const parsed = ChapterOutlineOutputSchema.parse({
