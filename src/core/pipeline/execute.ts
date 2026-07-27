@@ -682,8 +682,9 @@ function cancelRunning(
   operation: ChapterOperation | { type: "plan-revise" },
 ): PipelineProjectState {
   const generating = state.chapterRuns.find(({ status }) => status === "generating");
-  const wasExpanding = generating?.lengthStatus === "too-short"
+  const hasExistingDraft = generating !== undefined
     && Boolean(state.bible.chapters.find(({ number }) => number === generating.chapterNumber)?.draft);
+  const wasExpanding = hasExistingDraft && generating?.lengthStatus === "too-short";
   const attempt = {
     type: "cancellation" as const,
     operation: wasExpanding ? "auto-expand" as const : operation.type,
@@ -700,6 +701,11 @@ function cancelRunning(
     next = setChapter(next, generating.chapterNumber, {
       status: "pending",
       error: undefined,
+      // A cancelled chapter that already has a draft (mid auto-expand/expand/revise)
+      // must not silently finalize into the manuscript at its pre-expansion length --
+      // flag it so selectChapterNumbers()'s retry/regenerate/expand path can pick it
+      // back up instead of leaving it stuck at pending forever.
+      needsExpansion: hasExistingDraft ? true : undefined,
       attempts: [...(generating.attempts ?? []), attempt],
     });
   }
@@ -834,10 +840,11 @@ export async function executePipeline(
       state = await save(runtime, state);
       if (definition.id === "chapter-outline") {
         if (state.configuration.requireApproval && !state.workflow.approvedAt) {
+          const approvalStage = setWorkflowStage(state, "approval");
           state = await save(runtime, {
-            ...setWorkflowStage(state, "approval"),
+            ...approvalStage,
             workflow: {
-              ...setWorkflowStage(state, "approval").workflow,
+              ...approvalStage.workflow,
               awaitingApproval: true,
             },
           });
@@ -973,10 +980,11 @@ export async function revisePlan(
       },
     };
     if (working.configuration.requireApproval) {
+      const approvalStage = setWorkflowStage(next, "approval");
       next = {
-        ...setWorkflowStage(next, "approval"),
+        ...approvalStage,
         workflow: {
-          ...setWorkflowStage(next, "approval").workflow,
+          ...approvalStage.workflow,
           awaitingApproval: true,
           approvedAt: undefined,
         },

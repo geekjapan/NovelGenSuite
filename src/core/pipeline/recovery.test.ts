@@ -6,6 +6,7 @@ import type { ChapterOutlineOutput } from "../../shared/agent-schemas.js";
 import { executePipeline, type PipelineRuntime } from "./execute.js";
 import { generateMock, type Generate } from "./mock-llm.js";
 import { initializePipelineState } from "./project-state.js";
+import { selectChapterNumbers } from "./chapters.js";
 import {
   actionableError,
   classifyRecovery,
@@ -407,4 +408,59 @@ test("observability logs prompt size, chapter order, and stage durations", async
     event === "pipeline.prompt" && details.chapterOrder === 1));
   assert.ok(events.filter(({ event }) => event === "pipeline.stage")
     .every(({ details }) => typeof details.elapsedMs === "number"));
+});
+
+test("abort mid auto-expand flags needsExpansion so the chapter is not silently finalized", async () => {
+  let expandAttempted = false;
+  const controller = new AbortController();
+  const generate: Generate = async (request) => {
+    if (request.agentId === "drafting") {
+      if (request.operation === "auto-expand") {
+        expandAttempted = true;
+        controller.abort();
+        request.signal?.throwIfAborted();
+        throw new DOMException("aborted", "AbortError");
+      }
+      return JSON.stringify({
+        chapterNumber: request.chapterNumber,
+        draft: "short",
+        chapterSummary: "summary",
+        continuityNotes: [],
+      });
+    }
+    return generateMock(request);
+  };
+
+  const cancelled = await executePipeline(initial(), runtime, generate, {
+    retryDelayMs: 0,
+    log: quiet,
+    signal: controller.signal,
+  });
+  assert.ok(expandAttempted);
+  const chapter = cancelled.chapterRuns[0]!;
+  assert.equal(chapter.status, "pending");
+  assert.equal(chapter.needsExpansion, true);
+
+  // A plain resume must not treat this chapter as done: it already has a draft,
+  // so selectChapterNumbers({type:"resume"}) correctly skips chapter 1 (per essence)
+  // while still picking up chapter 2, which has no draft yet.
+  assert.deepEqual(selectChapterNumbers(cancelled, { type: "resume" }), [2]);
+  assert.deepEqual(
+    selectChapterNumbers(cancelled, { type: "retry", chapterNumber: 1 }),
+    [1],
+  );
+
+  const resumed = await executePipeline(cancelled, runtime, generateMock, {
+    retryDelayMs: 0,
+    log: quiet,
+  });
+  assert.equal(resumed.chapterRuns[0]!.needsExpansion, true);
+
+  const expanded = await executePipeline(resumed, runtime, generateMock, {
+    retryDelayMs: 0,
+    log: quiet,
+    chapterOperation: { type: "expand", chapterNumber: 1, instruction: "expand" },
+  });
+  assert.equal(expanded.chapterRuns[0]!.status, "completed");
+  assert.equal(expanded.chapterRuns[0]!.needsExpansion, false);
 });

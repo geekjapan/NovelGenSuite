@@ -80,6 +80,11 @@ export async function reconcileOrphanedRuns(root: string): Promise<void> {
               ...chapter,
               status: "pending" as const,
               error: undefined,
+              // Mirrors cancelRunning(): a draft already produced (mid auto-expand/
+              // expand/revise) must not silently finalize into the manuscript at its
+              // pre-expansion length after an orphaned-run restart.
+              needsExpansion: state.bible.chapters.find(({ number }) =>
+                number === chapter.chapterNumber)?.draft ? true : chapter.needsExpansion,
               attempts: [...(chapter.attempts ?? []), attempt],
             }
           : chapter),

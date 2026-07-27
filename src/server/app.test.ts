@@ -699,6 +699,35 @@ test("a new server returns an orphaned running role to pending with cancellation
   assert.ok(resumed.agents.every(({ status }: any) => status === "completed"));
 });
 
+test("an orphaned generating chapter with a draft is reconciled with needsExpansion set", async () => {
+  const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
+  const created = await project(createApp({ projectsRoot: root }));
+  const state = (await readProjectState(root, created.id))!;
+  state.agents[0] = {
+    ...state.agents[0]!,
+    status: "running",
+    startedAt: new Date().toISOString(),
+  };
+  state.bible.chapters[0] = {
+    ...state.bible.chapters[0]!,
+    draft: "short pre-expansion draft",
+  };
+  state.chapterRuns[0] = {
+    ...state.chapterRuns[0]!,
+    status: "generating",
+    lengthStatus: "too-short",
+  };
+  await writeProjectState(root, state);
+
+  const restarted = createApp({ projectsRoot: root });
+  await restarted.request(`/projects/${created.id}/state`);
+  const persisted = await readProjectState(root, created.id);
+
+  assert.equal(persisted?.chapterRuns[0]?.status, "pending");
+  assert.equal(persisted?.chapterRuns[0]?.needsExpansion, true);
+  assert.equal(persisted?.chapterRuns[0]?.attempts?.at(-1)?.type, "cancellation");
+});
+
 test("a corrupted project neither blocks other requests after restart nor appears in the list", async () => {
   const root = await mkdtemp(join(tmpdir(), "novel-gen-suite-"));
   const created = await project(createApp({ projectsRoot: root }));
